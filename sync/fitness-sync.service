@@ -1,0 +1,7 @@
+[Unit]
+Description=Sync fitness tracker files with the Obsidian vault
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/Documents/FitnessTracker-Project/sync/fitness-sync.sh
