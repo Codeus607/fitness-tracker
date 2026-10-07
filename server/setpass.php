@@ -11,7 +11,8 @@ $again = rtrim((string)fgets(STDIN), "\r\n");
 if ($pw !== $again) exit("Passwords don't match.\n");
 if (strlen($pw) < 8) exit("Use at least 8 characters.\n");
 
-file_put_contents("$dir/auth.json", json_encode(['hash' => password_hash($pw, PASSWORD_DEFAULT), 'fails' => []]));
+// changed_at lets other apps sharing this password (e.g. the meditation app) drop older logins
+file_put_contents("$dir/auth.json", json_encode(['hash' => password_hash($pw, PASSWORD_DEFAULT), 'fails' => [], 'changed_at' => time()]));
 chmod("$dir/auth.json", 0600);
 if (is_file("$dir/fitness.sqlite")) {
     $db = new PDO("sqlite:$dir/fitness.sqlite");
