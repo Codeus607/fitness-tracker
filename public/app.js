@@ -480,6 +480,227 @@ function viewWorkout(id) {
     </div>`;
 }
 
+const BODY = {
+  front: {
+    base: [
+      'M100,8 C88,8 82,18 83,32 C84,44 90,52 100,54 Z', // head
+      'M92,48 L100,48 L100,66 L90,66 Z', // neck
+      'M42,222 C36,232 36,246 42,254 C48,256 52,248 52,240 L52,224 Z', // hand
+      'M80,306 C78,314 78,322 82,328 L94,328 C97,320 97,312 95,306 Z', // knee
+      'M80,386 C76,396 74,404 82,406 L96,406 C98,398 96,390 92,386 Z', // foot
+      'M86,380 L80,386 L92,386 L92,380 Z',
+    ],
+    muscles: {
+      traps: ['M92,56 C88,62 82,66 74,70 L96,70 L96,60 Z'],
+      frontDelt: ['M80,72 C72,74 68,80 66,90 C66,96 67,100 69,102 C71,92 75,84 82,78 Z'],
+      sideDelt: ['M74,70 C62,72 55,80 54,94 C56,100 60,102 65,100 C64,90 67,80 77,72 Z'],
+      chest: ['M98,74 L84,74 C74,78 70,90 70,104 C78,114 90,116 98,112 Z'],
+      biceps: ['M57,104 C53,116 53,132 56,146 C60,151 66,150 68,144 C70,130 69,114 67,104 Z'],
+      forearms: ['M55,152 C47,168 43,192 42,220 L52,222 C56,200 62,178 67,154 Z'],
+      abs: ['M99,116 L89,119 C87,142 87,170 88,196 C92,206 96,208 99,208 Z'],
+      obliques: ['M86,118 C78,116 73,124 73,140 C73,162 75,180 81,198 L87,200 C85,172 84,142 86,118 Z'],
+      quads: ['M74,212 C66,240 70,282 79,306 C85,312 91,311 95,304 C92,272 91,244 94,216 Z'],
+      adductors: ['M96,216 C91,242 92,272 96,296 L99,270 L99,214 Z'],
+      calves: ['M80,330 C73,346 73,368 80,386 L91,386 C94,364 94,346 91,330 Z'],
+    },
+  },
+  back: {
+    base: [
+      'M100,8 C88,8 82,18 83,32 C84,44 90,52 100,54 Z',
+      'M92,48 L100,48 L100,62 L90,62 Z',
+      'M42,222 C36,232 36,246 42,254 C48,256 52,248 52,240 L52,224 Z',
+      'M80,308 C78,314 78,320 80,324 L96,324 C97,318 97,312 96,308 Z',
+      'M80,386 C76,396 74,404 82,406 L96,406 C98,398 96,390 92,386 Z',
+      'M84,372 L82,386 L92,386 L92,370 Z',
+    ],
+    muscles: {
+      traps: ['M99,56 L90,58 C86,64 80,68 74,70 C84,78 92,96 99,124 Z'],
+      rearDelt: ['M73,72 C66,74 62,80 60,90 C64,96 69,96 72,92 C74,84 78,78 84,76 Z'],
+      sideDelt: ['M72,70 C61,72 55,80 54,94 C56,99 58,100 60,98 C61,86 66,76 74,72 Z'],
+      upperBack: ['M86,80 C80,84 75,90 74,98 C80,106 88,112 96,118 C92,104 90,92 86,80 Z'],
+      lats: ['M73,100 C72,124 76,152 87,176 L97,178 L97,152 C92,132 84,116 75,104 Z'],
+      lowerBack: ['M88,180 L99,182 L99,210 L84,210 C86,200 87,190 88,180 Z'],
+      triceps: ['M56,102 C51,116 51,134 56,148 C60,152 66,150 68,144 C70,130 69,114 67,102 Z'],
+      forearms: ['M55,152 C47,168 43,192 42,220 L52,222 C56,200 62,178 67,154 Z'],
+      glutes: ['M76,208 C68,222 69,244 82,252 C91,256 98,252 99,242 L99,212 Z'],
+      hamstrings: ['M76,256 C71,276 74,296 80,306 L96,306 C99,288 99,270 97,256 C90,258 82,258 76,256 Z'],
+      calves: ['M79,326 C71,340 72,362 81,374 C88,372 94,362 96,346 C95,334 91,326 85,325 Z'],
+    },
+  },
+};
+
+const mixHex = (a, b, t) => '#' + [1, 3, 5].map(k => Math.round(parseInt(a.substr(k, 2), 16) * (1 - t) + parseInt(b.substr(k, 2), 16) * t).toString(16).padStart(2, '0')).join('');
+
+// ready-made SVG for one map; vals: muscle → { v: 0..1 or null, tip }
+function bodyMap(vals, ramp, label) {
+  const view = (k, dx) => {
+    const v = BODY[k];
+    const both = d => `<path d="${d}"/><path d="${d}" transform="matrix(-1,0,0,1,200,0)"/>`;
+    const sil = [...v.base, ...Object.values(v.muscles).flat()].map(both).join('');
+    const mus = Object.entries(v.muscles).map(([m, ds]) => {
+      const x = vals[m] || {};
+      const style = x.v == null ? '' : ` style="fill:${mixHex(ramp[0], ramp[1], x.v)}"`;
+      return `<g class="m ${x.v == null ? 'off' : 'on'}"${style}${x.tip ? ` data-tip="${esc(x.tip)}"` : ''}>${ds.map(both).join('')}</g>`;
+    }).join('');
+    return `<g transform="translate(${dx},0)"><g class="sil">${sil}</g><g class="base">${v.base.map(both).join('')}</g>${mus}</g>`;
+  };
+  return `<svg class="body" viewBox="0 0 420 412" role="img" aria-label="${esc(label)}">${view('front', 0)}${view('back', 220)}</svg>`;
+}
+
+// ----- body maps -----
+// muscles each exercise works: 'primary … / secondary …' (secondary counts half)
+const MUSCLE_NAMES = {
+  traps: 'traps', frontDelt: 'front delts', sideDelt: 'side delts', rearDelt: 'rear delts', chest: 'chest',
+  biceps: 'biceps', triceps: 'triceps', forearms: 'forearms', abs: 'abs', obliques: 'obliques',
+  upperBack: 'upper back', lats: 'lats', lowerBack: 'lower back', glutes: 'glutes', quads: 'quads',
+  hamstrings: 'hamstrings', adductors: 'adductors', calves: 'calves',
+};
+const EX_MUSCLES = {
+  'BB Bench Press': 'chest / frontDelt triceps',
+  'BB Incline Bench Press': 'chest frontDelt / triceps',
+  'BB Close Grip Bench Press': 'triceps chest / frontDelt',
+  'DB Bench Press': 'chest / frontDelt triceps',
+  'DB Incline Bench Press': 'chest frontDelt / triceps',
+  'DB Fly': 'chest / frontDelt',
+  'BB Reverse Grip Bench Press': 'chest / frontDelt triceps',
+  'Machine Fly': 'chest / frontDelt',
+  'Cable Fly': 'chest / frontDelt',
+  'Pull-ups': 'lats / biceps upperBack forearms',
+  'BB Row': 'upperBack lats / rearDelt biceps lowerBack',
+  'BB (Kelso) Shrug': 'traps upperBack',
+  'Pulldown (Any Grip)': 'lats / biceps upperBack',
+  '1 Arm Pulldown': 'lats / biceps',
+  'Back Extension': 'lowerBack / glutes hamstrings',
+  'BB Deadlift': 'lowerBack glutes hamstrings / traps quads forearms',
+  'Machine Row': 'upperBack lats / rearDelt biceps',
+  'Machine High Row': 'lats upperBack / rearDelt biceps',
+  'BB Meadows Row': 'lats upperBack / rearDelt biceps',
+  'DB Incline Row': 'upperBack lats / rearDelt biceps',
+  'BB Squat': 'quads glutes / adductors lowerBack',
+  'BB Squat Heels Elevated': 'quads / glutes',
+  'BB Romanian DeadLift': 'hamstrings glutes / lowerBack',
+  'Standing Calf Raise': 'calves',
+  'BB Hip Thrust': 'glutes / hamstrings',
+  'Glute-Focused Back Extension': 'glutes / hamstrings lowerBack',
+  'Step-Ups Box': 'quads glutes',
+  'Machine Leg Extension': 'quads',
+  'Machine Leg Curl': 'hamstrings',
+  'Machine Leg Press': 'quads glutes / adductors',
+  'Nordic Curl': 'hamstrings',
+  'DB Bulgarian Split Squat': 'quads glutes / adductors',
+  'BB Overhead Press': 'frontDelt / sideDelt triceps',
+  'DB Press': 'frontDelt / sideDelt triceps',
+  'DB Lateral Raise': 'sideDelt',
+  'DB Rear Fly': 'rearDelt / upperBack',
+  'DB Lying On Bench Rear Fly': 'rearDelt / upperBack',
+  'DB Incline Bench Y Raise': 'sideDelt traps / rearDelt',
+  'Y-T Face Down': 'rearDelt traps / upperBack',
+  'Cable Face Pull': 'rearDelt / upperBack traps',
+  'DB Curl (Seated or Standing)': 'biceps / forearms',
+  'DB Hammer Curl (Seated or Standing)': 'biceps forearms',
+  'DB Preacher Curl (Long Stretch)': 'biceps',
+  'DB Incline Curl': 'biceps',
+  'Drag Curl ZB': 'biceps',
+  'EZ-Bar Skull Crusher': 'triceps',
+  'EZ-Bar Curl (also with ArmBlaster)': 'biceps / forearms',
+  'EZ-Bar Reverse Curl (also with ArmBlaster)': 'forearms / biceps',
+  'EZ-Bar Reverse Curl ("Broken Wrists"+ArmBlaster)': 'forearms / biceps',
+  'DB Wrist Curl (Palm Up)': 'forearms',
+  'DB Wrist Extension (Palm Down)': 'forearms',
+  'DB Zottman Curl': 'biceps forearms',
+  'Dips': 'triceps chest / frontDelt',
+  'DB Over Head Triceps': 'triceps',
+  'Cable Triceps Push Down (Any grip)': 'triceps',
+  'Cable Biceps': 'biceps',
+  'Dead Hang': 'forearms / lats',
+  'Dragon Fly': 'abs',
+  'Crunch': 'abs',
+  'Ab-Wheel': 'abs / lats',
+  'Sides On Back Extension Bench': 'obliques',
+  'DB Sides': 'obliques',
+  'Reverse Crunch': 'abs',
+};
+// guesses for exercises added to the list later, checked in order
+const MUSCLE_RULES = [
+  [/calf|calve/i, 'calves'], [/leg curl|nordic/i, 'hamstrings'], [/leg ext/i, 'quads'],
+  [/romanian|rdl|good ?morning/i, 'hamstrings glutes / lowerBack'], [/deadlift/i, 'lowerBack glutes hamstrings / traps quads forearms'],
+  [/squat|lunge|leg press|step/i, 'quads glutes / adductors'], [/hip thrust|glute|kickback/i, 'glutes / hamstrings'],
+  [/adduct/i, 'adductors'], [/abduct/i, 'glutes'], [/back ext|hyperext/i, 'lowerBack / glutes hamstrings'],
+  [/shrug/i, 'traps'], [/face pull|rear/i, 'rearDelt / upperBack'], [/lateral/i, 'sideDelt'],
+  [/pull-?up|chin|pulldown|pullover|straight-arm/i, 'lats / biceps'], [/row/i, 'upperBack lats / rearDelt biceps'],
+  [/overhead press|shoulder press|military|arnold/i, 'frontDelt / sideDelt triceps'],
+  [/tricep|skull|push ?down|dip|kick/i, 'triceps'], [/bench|chest|push-?up|fly/i, 'chest / frontDelt triceps'],
+  [/wrist|reverse curl|hang|farmer|grip/i, 'forearms'], [/curl/i, 'biceps / forearms'],
+  [/side|oblique|pallof|twist/i, 'obliques'], [/crunch|\bab\b|plank|leg raise|sit-?up/i, 'abs'],
+];
+const GROUP_MUSCLES = { Chest: 'chest', Back: 'lats upperBack', Legs: 'quads glutes', Shoulders: 'frontDelt sideDelt', Arms: 'biceps triceps', Core: 'abs' };
+
+const musclesCache = {};
+function musclesOf(ex) {
+  if (musclesCache[ex]) return musclesCache[ex];
+  const i = info(ex);
+  const spec = EX_MUSCLES[ex] ?? MUSCLE_RULES.find(([re]) => re.test(ex))?.[1] ?? GROUP_MUSCLES[i.group] ?? '';
+  const [p = '', s = ''] = spec.split('/');
+  return musclesCache[ex] = { primary: p.split(/\s+/).filter(Boolean), secondary: s.split(/\s+/).filter(Boolean) };
+}
+
+// last 7 days: working sets per muscle, recent ones weigh more (today ×1 … 6 days ago ×1/7)
+function trainedMap() {
+  const t = today(), acc = {};
+  for (const w of S.workouts) {
+    const d = daysBetween(w.date, t);
+    if (d < 0 || d > 6) continue;
+    for (const s of working(w.sets)) {
+      const m = musclesOf(s.exercise);
+      for (const [list, k] of [[m.primary, 1], [m.secondary, 0.5]]) for (const mu of list) {
+        const a = acc[mu] ||= { score: 0, sets: 0, last: d };
+        a.score += k * (7 - d) / 7;
+        a.sets += k;
+        a.last = Math.min(a.last, d);
+      }
+    }
+  }
+  const out = {};
+  for (const [mu, a] of Object.entries(acc)) out[mu] = {
+    v: Math.min(1, a.score / 6),
+    tip: `<b>${MUSCLE_NAMES[mu]}</b><br>${fmt(a.sets)} sets in 7 days · last ${a.last ? a.last + 'd ago' : 'today'}`,
+  };
+  return out;
+}
+
+// how close each muscle is to its goals: average of current / target over the exercises that work it most
+function goalMap() {
+  const acc = {};
+  for (const [ex, goal] of Object.entries(S.goals)) {
+    if (!(goal > 0)) continue;
+    const i = info(ex), mm = mainMetric(i);
+    const cur = Math.max(0, ...(S.hist[ex] || []).map(x => sessionValue(x.sets, mm.key) ?? 0));
+    const pct = Math.min(1, cur / goal);
+    for (const mu of musclesOf(ex).primary) (acc[mu] ||= []).push({ ex, cur, goal, pct, unit: mm.unit });
+  }
+  const out = {};
+  for (const [mu, list] of Object.entries(acc)) {
+    const avg = sum(list, x => x.pct) / list.length;
+    out[mu] = {
+      v: avg,
+      tip: `<b>${MUSCLE_NAMES[mu]} · ${Math.round(avg * 100)}%</b>` + list.map(x => `<br>${esc(x.ex)}: ${fmt(x.cur.toFixed(1))} / ${fmt(x.goal)} ${x.unit}`).join(''),
+    };
+  }
+  return out;
+}
+
+const RED = ['#f0c9cc', '#a3192a'], GREEN = ['#dcecd0', '#3c8a36'];
+
+function viewBodyMaps() {
+  const legend = (ramp, lo, hi) => `<div class="body-legend"><span>${lo}</span><i style="background:linear-gradient(90deg,${ramp[0]},${ramp[1]})"></i><span>${hi}</span></div>`;
+  const goals = goalMap();
+  return `<div class="maps">
+    <div><h2>trained · last 7 days</h2><div class="card">${bodyMap(trainedMap(), RED, 'muscles trained in the last 7 days')}${legend(RED, 'a little / days ago', 'a lot / today')}</div></div>
+    <div><h2>strength vs goals</h2><div class="card">${bodyMap(goals, GREEN, 'progress towards strength goals per muscle')}${legend(GREEN, 'far', 'at goal')}
+      ${Object.keys(goals).length ? '' : '<p class="meta" style="margin:8px 0 0">no goals yet: set one on an exercise page</p>'}</div></div>
+  </div>`;
+}
+
 // ----- stats -----
 function monthStats(m) {
   const ws = S.workouts.filter(w => w.date.startsWith(m));
@@ -556,6 +777,7 @@ function viewStats() {
 
   return `
     <h1>stats</h1>
+    ${viewBodyMaps()}
     <div class="month-nav">
       <button class="btn ghost" data-act="month" data-n="-1" aria-label="previous month">‹</button>
       <span>${esc(monthName(m).toLowerCase())}</span>
