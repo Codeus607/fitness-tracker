@@ -1,6 +1,6 @@
 // Network-first service worker: the app needs the server anyway, the cache
 // only makes it installable and lets the shell open on a flaky connection.
-const CACHE = 'fitness-1791952594';
+const CACHE = 'fitness-1791953203';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'icon.svg', 'manifest.webmanifest'];
 
 self.addEventListener('install', e => {

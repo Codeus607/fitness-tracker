@@ -16,6 +16,8 @@ header('X-Content-Type-Options: nosniff');
 const COOKIE = 'fit_token';
 const MAX_WEIGHT = 1000;
 const MAX_REPS = 10000;
+// body measurements in cm, in display order
+const PARTS = ['shoulders', 'chest', 'biceps', 'waist', 'thighs', 'forearms', 'calves'];
 
 function out(array $data, int $code = 200): never
 {
@@ -59,6 +61,16 @@ function db(): PDO
         CREATE INDEX IF NOT EXISTS sets_workout ON sets(workout_id);
         CREATE TABLE IF NOT EXISTS goals (
             exercise TEXT PRIMARY KEY,
+            target REAL NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS measurements (
+            date TEXT NOT NULL,
+            part TEXT NOT NULL,
+            value REAL NOT NULL,
+            PRIMARY KEY (date, part)
+        );
+        CREATE TABLE IF NOT EXISTS size_targets (
+            part TEXT PRIMARY KEY,
             target REAL NOT NULL
         );
         CREATE TABLE IF NOT EXISTS tokens (
@@ -175,6 +187,28 @@ function num($v, float $min, float $max, string $what): float
     return round((float)$v, 2);
 }
 
+// part => cm from a client object, skipping empty values
+function part_values($v): array
+{
+    if (!is_array($v)) fail('Invalid measurements');
+    $out = [];
+    foreach (PARTS as $p) {
+        if (!isset($v[$p]) || $v[$p] === '' || $v[$p] === null) continue;
+        $out[$p] = num($v[$p], 1, 500, $p);
+    }
+    return $out;
+}
+
+function measurements(): array
+{
+    return db()->query('SELECT date, part, value FROM measurements ORDER BY date, part')->fetchAll();
+}
+
+function size_targets(): array
+{
+    return array_column(db()->query('SELECT part, target FROM size_targets')->fetchAll(), 'target', 'part');
+}
+
 function valid_date($d): string
 {
     if (!is_string($d) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $d) || !strtotime($d)) fail('Invalid date');
@@ -274,6 +308,16 @@ function write_md(): void
         if ($rows) $md .= "\n| Exercise | Sets (kg × reps) | Load |\n|---|---|---|\n" . $rows;
     }
 
+    $targets = size_targets();
+    $byDate = [];
+    foreach (measurements() as $m) $byDate[$m['date']][$m['part']] = $m['value'];
+    if ($targets || $byDate) {
+        $md .= "\n## Body measurements (cm)\n\n| Date | " . implode(' | ', array_map('ucfirst', PARTS)) . " |\n|" . str_repeat('---|', count(PARTS) + 1) . "\n";
+        $row = fn($label, $vals) => "| $label | " . implode(' | ', array_map(fn($p) => isset($vals[$p]) ? fmt_num((float)$vals[$p]) : '', PARTS)) . " |\n";
+        if ($targets) $md .= $row('**Target**', $targets);
+        foreach (array_reverse($byDate, true) as $d => $vals) $md .= $row($d, $vals);
+    }
+
     $tmp = DATA_DIR . '/Fitness.md.tmp';
     file_put_contents($tmp, $md);
     rename($tmp, DATA_DIR . '/Fitness.md');
@@ -303,6 +347,9 @@ $result = match ("$method $action") {
         'exercises' => exercises(),
         'workouts' => workouts(),
         'goals' => (object)array_column(db()->query('SELECT exercise, target FROM goals')->fetchAll(), 'target', 'exercise'),
+        'parts' => PARTS,
+        'measurements' => measurements(),
+        'size_targets' => (object)size_targets(),
     ],
 
     'POST logout' => (function () {
@@ -391,6 +438,37 @@ $result = match ("$method $action") {
                 ->execute([$ex, num($in['target'], 0.01, MAX_REPS, 'target')]);
         }
         return ['ok' => true];
+    })(),
+
+    // replaces every measurement of that date
+    'POST measure_save' => (function () use ($in, &$changed) {
+        $date = valid_date($in['date'] ?? '');
+        $vals = part_values($in['values'] ?? null);
+        if (!$vals) fail('Enter at least one measurement');
+        db()->beginTransaction();
+        db()->prepare('DELETE FROM measurements WHERE date = ?')->execute([$date]);
+        $st = db()->prepare('INSERT INTO measurements (date, part, value) VALUES (?, ?, ?)');
+        foreach ($vals as $p => $v) $st->execute([$date, $p, $v]);
+        db()->commit();
+        $changed = true;
+        return ['measurements' => measurements()];
+    })(),
+
+    'POST measure_delete' => (function () use ($in, &$changed) {
+        db()->prepare('DELETE FROM measurements WHERE date = ?')->execute([valid_date($in['date'] ?? '')]);
+        $changed = true;
+        return ['measurements' => measurements()];
+    })(),
+
+    'POST size_targets_set' => (function () use ($in, &$changed) {
+        $vals = part_values($in['values'] ?? null);
+        db()->beginTransaction();
+        db()->exec('DELETE FROM size_targets');
+        $st = db()->prepare('INSERT INTO size_targets (part, target) VALUES (?, ?)');
+        foreach ($vals as $p => $v) $st->execute([$p, $v]);
+        db()->commit();
+        $changed = true;
+        return ['size_targets' => (object)size_targets()];
     })(),
 
     default => fail('Unknown action', 404),

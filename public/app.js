@@ -66,7 +66,7 @@ const metricUnit = key => ({ e1rm: 'kg', weight: 'kg', volume: 'kg', reps: 'reps
 
 // ---------- state ----------
 const S = {
-  groups: [], info: {}, workouts: [], goals: {}, hist: {},
+  groups: [], info: {}, workouts: [], goals: {}, hist: {}, parts: [], meas: [], sizeTargets: {},
   tab: 'log', view: null, month: today().slice(0, 7), showAll: false, metric: null,
   cards: null, cardsFor: null, restAt: null, busy: false,
 };
@@ -78,6 +78,9 @@ const workoutById = id => S.workouts.find(w => w.id === id);
 function ingest(d) {
   S.groups = d.exercises;
   S.goals = d.goals || {};
+  S.parts = d.parts || [];
+  S.meas = (d.measurements || []).map(m => ({ ...m, value: +m.value }));
+  S.sizeTargets = Object.fromEntries(Object.entries(d.size_targets || {}).map(([k, v]) => [k, +v]));
   S.info = {};
   for (const g of S.groups) for (const e of g.exercises) S.info[e.name] = { ...e, group: g.name };
   S.workouts = d.workouts;
@@ -207,6 +210,7 @@ function render() {
   const v = S.view;
   $('#app').innerHTML = v?.type === 'workout' ? viewWorkout(v.id)
     : v?.type === 'exercise' ? viewExercise(v.name)
+    : v?.type === 'measure' ? viewMeasure()
     : S.tab === 'log' ? viewLog()
     : S.tab === 'history' ? viewHistory()
     : viewStats();
@@ -647,38 +651,126 @@ function trainedMap() {
   return out;
 }
 
-// how close each muscle is to its goals: average of current / target over the exercises that work it most
-function goalMap() {
-  const acc = {};
-  for (const [ex, goal] of Object.entries(S.goals)) {
-    if (!(goal > 0)) continue;
-    const i = info(ex), mm = mainMetric(i);
-    const cur = Math.max(0, ...(S.hist[ex] || []).map(x => sessionValue(x.sets, mm.key) ?? 0));
-    const pct = Math.min(1, cur / goal);
-    for (const mu of musclesOf(ex).primary) (acc[mu] ||= []).push({ ex, cur, goal, pct, unit: mm.unit });
-  }
-  const out = {};
-  for (const [mu, list] of Object.entries(acc)) {
-    const avg = sum(list, x => x.pct) / list.length;
-    out[mu] = {
-      v: avg,
-      tip: `<b>${MUSCLE_NAMES[mu]} · ${Math.round(avg * 100)}%</b>` + list.map(x => `<br>${esc(x.ex)}: ${fmt(x.cur.toFixed(1))} / ${fmt(x.goal)} ${x.unit}`).join(''),
-    };
-  }
-  return out;
-}
-
 const RED = ['#f0c9cc', '#a3192a'], GREEN = ['#dcecd0', '#3c8a36'];
 
 function viewBodyMaps() {
   const legend = (ramp, lo, hi) => `<div class="body-legend"><span>${lo}</span><i style="background:linear-gradient(90deg,${ramp[0]},${ramp[1]})"></i><span>${hi}</span></div>`;
-  const goals = goalMap();
+  const sizes = sizeMap();
   return `<div class="maps">
     <div><h2>trained · last 7 days</h2><div class="card">${bodyMap(trainedMap(), RED, 'muscles trained in the last 7 days')}${legend(RED, 'a little / days ago', 'a lot / today')}</div></div>
-    <div><h2>strength vs goals</h2><div class="card">${bodyMap(goals, GREEN, 'progress towards strength goals per muscle')}${legend(GREEN, 'far', 'at goal')}
-      ${Object.keys(goals).length ? '' : '<p class="meta" style="margin:8px 0 0">no goals yet: set one on an exercise page</p>'}</div></div>
-  </div>`;
+    <div><div class="row between"><h2>size vs goals</h2><button class="btn small" data-act="openMeas">measurements</button></div>
+      <div class="card">${bodyMap(sizes, GREEN, 'body measurements compared to targets, per muscle')}${legend(GREEN, '≤75% of target', 'at target')}
+      ${Object.keys(sizes).length ? '' : '<p class="meta" style="margin:8px 0 0">no measurements with targets yet</p>'}</div></div>
+  </div>
+  <h2>measurements vs targets</h2>
+  <div class="card">${sizeRadar()}</div>`;
 }
+
+// ----- body size vs goals -----
+// muscles each tape measurement colours on the body map
+const PART_MUSCLES = {
+  shoulders: ['frontDelt', 'sideDelt', 'rearDelt', 'traps', 'upperBack', 'lats'],
+  chest: ['chest'], biceps: ['biceps', 'triceps'], waist: ['abs', 'obliques'],
+  thighs: ['quads', 'hamstrings', 'adductors'], forearms: ['forearms'], calves: ['calves'],
+};
+
+// latest value of each part, from the newest measurement that has it
+function latestSizes() {
+  const out = {};
+  for (const m of S.meas) out[m.part] = { value: m.value, date: m.date };
+  return out;
+}
+
+// 0..1: muscles go from ≤75% of target (palest) to 100%; waist goes from 10 cm above target to at/under it
+function sizeScore(part, cur, target) {
+  const v = part === 'waist' ? 1 - (cur - target) / 10 : (cur / target - 0.75) / 0.25;
+  return Math.max(0, Math.min(1, v));
+}
+const sizeLine = (part, x, t) => `${part}: ${fmt(x.value)} / ${fmt(t)} cm (${Math.round(x.value / t * 100)}%)`;
+
+function sizeMap() {
+  const cur = latestSizes(), out = {};
+  for (const [part, muscles] of Object.entries(PART_MUSCLES)) {
+    const x = cur[part], t = S.sizeTargets[part];
+    if (!x || !t) continue;
+    for (const mu of muscles) out[mu] = { v: sizeScore(part, x.value, t), tip: `<b>${MUSCLE_NAMES[mu]}</b><br>${sizeLine(part, x, t)}` };
+  }
+  return out;
+}
+
+// spiderweb: each axis is current / target, centre = 50%, outer ring = 110%
+function sizeRadar() {
+  const cur = latestSizes();
+  const parts = S.parts.filter(p => cur[p] && S.sizeTargets[p]);
+  if (parts.length < 3) return '<p class="meta">add at least 3 measurements with targets to see the web</p>';
+  const W = 340, H = 300, cx = W / 2, cy = H / 2 + 4, R = 100, lo = 0.5, hi = 1.1;
+  const ratio = p => p === 'waist' ? S.sizeTargets[p] / cur[p].value : cur[p].value / S.sizeTargets[p];
+  const pt = (k, r) => {
+    const a = -Math.PI / 2 + k * 2 * Math.PI / parts.length, d = R * Math.max(0, Math.min(1, (r - lo) / (hi - lo)));
+    return [cx + d * Math.cos(a), cy + d * Math.sin(a)];
+  };
+  const poly = r => parts.map((p, k) => pt(k, typeof r === 'function' ? r(p) : r).map(n => n.toFixed(1)).join(',')).join(' ');
+  const rings = [0.6, 0.7, 0.8, 0.9, 1.1].map(r => `<polygon class="ring" points="${poly(r)}"/>`).join('')
+    + `<text x="${cx + 3}" y="${pt(0, 0.8)[1] + 3}">80%</text>`;
+  const spokes = parts.map((p, k) => { const [x, y] = pt(k, hi); return `<line class="ring" x1="${cx}" y1="${cy}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}"/>`; }).join('');
+  const labels = parts.map((p, k) => {
+    const [x, y] = pt(k, hi + 0.1), anchor = Math.abs(x - cx) < 4 ? 'middle' : x < cx ? 'end' : 'start';
+    return `<text class="lab" x="${x.toFixed(1)}" y="${(y + 3).toFixed(1)}" text-anchor="${anchor}">${p}</text>
+      <text class="val" x="${x.toFixed(1)}" y="${(y + 15).toFixed(1)}" text-anchor="${anchor}">${fmt(cur[p].value)} / ${fmt(S.sizeTargets[p])}</text>`;
+  }).join('');
+  const dots = parts.map((p, k) => { const [x, y] = pt(k, ratio(p)); return `<circle class="dot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3"/><circle class="hit" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="14" data-tip="${esc(`<b>${p}</b><br>${sizeLine(p, cur[p], S.sizeTargets[p])}<br>measured ${prettyDate(cur[p].date, { day: 'numeric', month: 'short', year: 'numeric' })}`)}"/>`; }).join('');
+  return `<svg class="radar" viewBox="0 0 ${W} ${H}" role="img" aria-label="body measurements compared to targets">
+    ${rings}${spokes}<polygon class="target" points="${poly(1)}"/><polygon class="now" points="${poly(ratio)}"/>${dots}${labels}</svg>
+    <p class="meta" style="margin:6px 0 0">cm, latest / target · dashed line = target${S.parts.includes('waist') ? ' · waist: smaller is better' : ''}</p>`;
+}
+
+// ----- measurements page -----
+function viewMeasure() {
+  const last = latestSizes();
+  const dates = [...new Set(S.meas.map(m => m.date))].reverse();
+  const at = d => Object.fromEntries(S.meas.filter(m => m.date === d).map(m => [m.part, m.value]));
+  const inputs = (pre, vals, ph = {}) => `<div class="meas-grid">${S.parts.map(p => `
+    <label class="field" for="${pre}-${p}">${p}</label>
+    <input type="text" inputmode="decimal" id="${pre}-${p}" value="${vals[p] != null ? fmt(vals[p]) : ''}" placeholder="${ph[p] != null ? fmt(ph[p]) : 'cm'}">`).join('')}</div>`;
+  return `
+    <button class="btn ghost small" data-act="back">← back</button>
+    <h1>body measurements</h1>
+    <h2>new measurement</h2>
+    <div class="card">
+      <label class="field" for="mDate">date</label>
+      <input type="date" id="mDate" value="${today()}" max="${today()}" style="width:auto;margin-bottom:12px">
+      ${inputs('m', {}, Object.fromEntries(Object.entries(last).map(([p, x]) => [p, x.value])))}
+      <p class="meta" style="margin:8px 0 12px">cm · empty fields are skipped · saving a date again replaces it</p>
+      <button class="btn primary" data-act="saveMeas">save</button>
+    </div>
+    <h2>targets</h2>
+    <div class="card">
+      ${inputs('t', S.sizeTargets)}
+      <div style="height:12px"></div>
+      <button class="btn" data-act="saveTargets">save targets</button>
+    </div>
+    <h2>history</h2>
+    <div class="card">
+      ${dates.length ? `<div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>date</th>${S.parts.map(p => `<th class="num">${p}</th>`).join('')}<th></th></tr></thead>
+        <tbody>${dates.map(d => { const v = at(d); return `<tr class="click" data-act="editMeas" data-d="${d}">
+          <td>${esc(d)}</td>${S.parts.map(p => `<td class="num">${v[p] != null ? fmt(v[p]) : '<span class="dim">—</span>'}</td>`).join('')}
+          <td><button class="btn danger small" data-act="delMeas" data-d="${d}" aria-label="delete ${d}">✕</button></td></tr>`; }).join('')}</tbody>
+      </table></div><p class="meta" style="margin:10px 0 0">tap a row to edit it</p>` : '<p class="meta">no measurements yet</p>'}
+    </div>`;
+}
+
+const readParts = pre => {
+  const out = {};
+  for (const p of S.parts) {
+    const raw = $(`#${pre}-${p}`).value.trim();
+    if (raw === '') continue;
+    const v = parseNum(raw);
+    if (!(v > 0)) throw new Error(`Invalid ${p}`);
+    out[p] = v;
+  }
+  return out;
+};
 
 // ----- stats -----
 function monthStats(m) {
@@ -1089,6 +1181,32 @@ const actions = {
   },
   showAll: el => { S.showAll = el.dataset.v === '1'; render(); },
   metric: el => { S.metric = el.dataset.m; render(); },
+  openMeas: () => go({ type: 'measure' }),
+  saveMeas: () => run(async () => {
+    const values = readParts('m');
+    const res = await api('measure_save', { date: $('#mDate').value || today(), values });
+    S.meas = res.measurements.map(m => ({ ...m, value: +m.value }));
+    toast('measurements saved');
+    render();
+  }),
+  editMeas: el => {
+    const d = el.dataset.d;
+    $('#mDate').value = d;
+    for (const p of S.parts) $(`#m-${p}`).value = S.meas.find(m => m.date === d && m.part === p)?.value ?? '';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  },
+  delMeas: el => run(async () => {
+    if (!confirm(`Delete the measurements of ${el.dataset.d}?`)) return;
+    const res = await api('measure_delete', { date: el.dataset.d });
+    S.meas = res.measurements.map(m => ({ ...m, value: +m.value }));
+    render();
+  }),
+  saveTargets: () => run(async () => {
+    const res = await api('size_targets_set', { values: readParts('t') });
+    S.sizeTargets = Object.fromEntries(Object.entries(res.size_targets).map(([k, v]) => [k, +v]));
+    toast('targets saved');
+    render();
+  }),
   saveGoal: el => run(async () => {
     const raw = $('#goalIn').value.trim();
     const target = raw === '' ? 0 : parseNum(raw);

@@ -365,3 +365,14 @@ table.tbl { width: 100%; border-collapse: collapse; font-family: var(--mono); fo
 .body .m[data-tip] { cursor: pointer; }
 .body-legend { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
 .body-legend i { flex: 1; height: 8px; border-radius: 4px; }
+.radar { display: block; width: 100%; max-width: 460px; margin: 0 auto; overflow: visible; }
+.radar .ring { fill: none; stroke: var(--border); stroke-width: 1; }
+.radar .target { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.radar .now { fill: rgba(163, 190, 140, 0.35); stroke: #3c8a36; stroke-width: 2; stroke-linejoin: round; }
+.radar .dot { fill: #a3be8c; }
+.radar .hit { fill: transparent; cursor: pointer; }
+.radar text { font-family: var(--mono); font-size: 9px; fill: var(--muted); }
+.radar .lab { font-size: 11px; fill: var(--fg); }
+.radar .val { font-size: 10px; fill: var(--accent-2); }
+.meas-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; align-items: center; }
+.meas-grid label.field { margin: 0; }

@@ -19,7 +19,8 @@ Live instance: https://fitness.simonsmind.com (private, password protected).
   - a load-per-month chart and sets per muscle group
 - **Body maps (front and back):**
   - *trained, last 7 days*: muscles turn darker red the more working sets they got, with recent sets weighing more (secondary muscles count half)
-  - *strength vs goals*: muscles turn darker green the closer their exercises are to your goals (average of current / target)
+  - *size vs goals*: muscles turn darker green the closer your latest tape measurement is to its target (≤75% = palest; waist is inverted: at or under target = darkest, 10 cm over = palest)
+- **Body measurements:** log shoulders, chest, biceps, waist, thighs, forearms and calves (cm) with targets, shown on a spiderweb chart of latest vs target and included in the `Fitness.md` backup
   - exercise → muscle mapping lives in `EX_MUSCLES` in `app.js`; exercises not listed there are guessed from their name or body part
 - **Best performance summary:**
   - best set, estimated 1RM, last set
