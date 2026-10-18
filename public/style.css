@@ -360,8 +360,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-family: var(--mono); fo
 .maps { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 16px; margin-bottom: 8px; }
 .body { display: block; width: 100%; max-width: 420px; margin: 0 auto; }
 .body .sil { fill: var(--bg-code); }
-.body .m path { fill: var(--border); stroke: var(--bg-raised); stroke-width: 1.4; stroke-linejoin: round; }
-.body .m.on path { fill: inherit; }
+.body .m.off { fill: var(--border); }
 .body .m[data-tip] { cursor: pointer; }
 .body-legend { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
 .body-legend i { flex: 1; height: 8px; border-radius: 4px; }
