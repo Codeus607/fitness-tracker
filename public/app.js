@@ -66,7 +66,7 @@ const metricUnit = key => ({ e1rm: 'kg', weight: 'kg', volume: 'kg', reps: 'reps
 
 // ---------- state ----------
 const S = {
-  groups: [], info: {}, workouts: [], goals: {}, hist: {}, parts: [], meas: [], sizeTargets: {}, bw: [],
+  groups: [], info: {}, workouts: [], goals: {}, hist: {}, parts: [], meas: [], sizeTargets: {}, bw: [], programs: [],
   tab: 'log', view: null, month: today().slice(0, 7), showAll: false, metric: null,
   cards: null, cardsFor: null, restAt: null, busy: false,
 };
@@ -77,6 +77,7 @@ const workoutById = id => S.workouts.find(w => w.id === id);
 
 function ingest(d) {
   S.groups = d.exercises;
+  S.programs = d.programs || [];
   S.goals = d.goals || {};
   S.parts = d.parts || [];
   S.meas = (d.measurements || []).map(m => ({ ...m, value: +m.value }));
@@ -220,6 +221,7 @@ function render() {
     : v?.type === 'weight' ? viewWeight()
     : S.tab === 'log' ? viewLog()
     : S.tab === 'history' ? viewHistory()
+    : S.tab === 'program' ? viewPrograms()
     : viewStats();
   if (focus) {
     const el = document.querySelector(`[data-k="${focus}"]`);
@@ -255,7 +257,7 @@ function workoutCard(w) {
         <h3>${esc(prettyDate(w.date))}${w.finished_at == null ? ' <span class="good">· in progress</span>' : ''}</h3>
         <span class="meta">${dur}</span>
       </div>
-      <div class="muted" style="font-size:.85rem;margin:2px 0 4px">${groups.length ? groups.map(esc).join(', ') : 'empty'}</div>
+      <div class="muted" style="font-size:.85rem;margin:2px 0 4px">${planOf(w) ? `<span class="good">${esc(planOf(w).day.name)}</span> · ` : ''}${groups.length ? groups.map(esc).join(', ') : 'empty'}</div>
       <div class="meta">${exs.size} exercises · ${working(w.sets).length} sets · ${fmtInt(load)} kg</div>
     </button>`;
 }
@@ -272,7 +274,9 @@ function viewLog() {
         <label class="field" for="startDate">date</label>
         <input type="date" id="startDate" value="${today()}" max="${today()}">
         <div style="height:12px"></div>
-        <button class="btn primary block" data-act="start">start workout</button>
+        <button class="btn primary block" data-act="start">start empty workout</button>
+        ${nextDays().map(({ p, pi, di }) => `<div style="height:8px"></div>
+        <button class="btn block" data-act="startDay" data-p="${pi}" data-d="${di}">start next: ${esc(p.days[di].name)}</button>`).join('')}
       </div>
       ${recent.length ? `<h2>recent</h2>${recent.map(workoutCard).join('')}` : `<p class="meta">no workouts yet — start your first one above</p>`}`;
   }
@@ -301,6 +305,7 @@ function viewLog() {
 
 function exerciseCard(w, c, ci, prs) {
   const i = info(c.ex);
+  const target = planOf(w)?.day.items.find(it => it.exercise === c.ex);
   const prev = previousSession(c.ex, w);
   const prevSets = prev ? prev.sets : [];
   const saved = w.sets.filter(s => s.exercise === c.ex);
@@ -326,6 +331,7 @@ function exerciseCard(w, c, ci, prs) {
         <h3 class="grow"><a href="#" data-act="openEx" data-ex="${esc(c.ex)}">${esc(c.ex)}</a><span class="group">${esc(i.group)}</span></h3>
         <button class="xbtn" data-act="removeCard" data-c="${ci}" aria-label="remove exercise">×</button>
       </div>
+      ${target?.sets ? `<div class="meta">target ${esc(targetLabel(target))}</div>` : ''}
       <table class="sets">
         <thead><tr><th>set</th><th>prev</th><th>${i.bw || i.timed ? '+kg' : 'kg'}</th><th>${i.timed ? 'sec' : 'reps'}</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
@@ -335,6 +341,55 @@ function exerciseCard(w, c, ci, prs) {
         <span class="meta">${i.timed ? '' : fmtInt(loadOf(saved, i)) + ' kg'}${best && !i.timed && !i.bw && best.weight ? ` · 1RM ${fmt(brz(best.weight, best.reps).toFixed(1))}` : ''}${prev ? ` · last ${sinceLabel(daysBetween(prev.w.date, w.date))}` : ''}</span>
       </div>
     </div>`;
+}
+
+// ----- programs -----
+const planName = (p, d) => `${p.name} / ${d.name}`;
+const targetLabel = it => `${it.sets}×${it.reps}`;
+// the program day a workout was started from, if it still exists in programs.md
+function planOf(w) {
+  if (!w?.plan) return null;
+  for (const p of S.programs) for (const day of p.days) if (planName(p, day) === w.plan) return { p, day };
+  return null;
+}
+// last workout of each day of program p
+function lastDone(p) {
+  const out = new Map();
+  for (const w of S.workouts) {
+    const di = p.days.findIndex(d => planName(p, d) === w.plan);
+    if (di >= 0) out.set(di, w);
+  }
+  return out;
+}
+// per program, the day after the most recently done one (the first day if none done yet)
+function nextDays() {
+  return S.programs.map((p, pi) => {
+    const last = [...lastDone(p)].sort((a, b) => a[1].date.localeCompare(b[1].date) || a[1].started_at - b[1].started_at).at(-1);
+    return { p, pi, di: last ? (last[0] + 1) % p.days.length : 0 };
+  });
+}
+
+function viewPrograms() {
+  if (!S.programs.length) return `<h1>programs</h1><p class="meta">no programs yet — add them to Fitness Programs.md</p>`;
+  const t = today(), next = nextDays(), w = active();
+  return '<h1>programs</h1>' + S.programs.map((p, pi) => {
+    const done = lastDone(p);
+    return `<h2>${esc(p.name.toLowerCase())}</h2>
+      ${p.note ? `<p class="meta" style="margin:-6px 0 10px">${esc(p.note)}</p>` : ''}
+      ${p.days.map((d, di) => {
+        const last = done.get(di), since = last ? daysBetween(last.date, t) : null;
+        return `<div class="card">
+          <h3>${esc(d.name)}</h3>
+          <div class="meta">${next[pi].di === di ? '<span class="good">next</span> · ' : ''}${since == null ? 'not done yet' : `last ${sinceLabel(since)}${since ? ' ago' : ''}`}</div>
+          ${d.note ? `<p class="meta" style="margin:2px 0 6px">${esc(d.note)}</p>` : ''}
+          <table class="tbl" style="margin:6px 0 10px"><tbody>${d.items.map(it => `
+            <tr class="click" data-act="openEx" data-ex="${esc(it.exercise)}">
+              <td class="name">${esc(it.exercise)}${S.info[it.exercise] ? '' : ' <span class="warn">· not in exercise list</span>'}</td>
+              <td class="num">${it.sets ? esc(targetLabel(it)) : ''}</td></tr>`).join('')}</tbody></table>
+          <button class="btn ${next[pi].di === di && !w ? 'primary' : ''} block" data-act="startDay" data-p="${pi}" data-d="${di}">${w ? 'add to current workout' : 'start this day'}</button>
+        </div>`;
+      }).join('')}`;
+  }).join('');
 }
 
 // ----- exercise picker -----
@@ -379,14 +434,20 @@ function renderPickList() {
 
 function closeSheet() { $('#sheet').hidden = true; $('#sheet').innerHTML = ''; }
 
+// sets = the program's target set count; otherwise as many rows as last time
+function newCard(ex, sets = 0) {
+  const prev = previousSession(ex, active());
+  const rows = sets ? Array.from({ length: sets }, () => ({ w: '', r: '', wu: false, done: false }))
+    // values come from the "prev" placeholders
+    : (prev ? prev.sets : [null]).map(s => ({ w: '', r: '', wu: !!s?.warmup, done: false }));
+  return { ex, rows };
+}
+
 function addExercise(ex) {
   closeSheet();
   const existing = S.cards.findIndex(c => c.ex === ex);
   if (existing < 0) {
-    const prev = previousSession(ex, active());
-    // pre-create as many rows as last time; values come from the "prev" placeholders
-    const rows = (prev ? prev.sets : [null]).map(s => ({ w: '', r: '', wu: !!s?.warmup, done: false }));
-    S.cards.push({ ex, rows });
+    S.cards.push(newCard(ex));
     saveDraft();
   }
   render();
@@ -1163,6 +1224,26 @@ const actions = {
     S.restAt = null;
     render();
     openPicker();
+  }),
+  startDay: el => run(async () => {
+    const p = S.programs[+el.dataset.p], d = p.days[+el.dataset.d];
+    let w = active();
+    if (w && !confirm(`Add the exercises of ${d.name} to the workout in progress?`)) return;
+    if (!w) {
+      // the log tab's date field, when started from there
+      w = (await api('workout_start', { date: $('#startDate')?.value || today(), plan: planName(p, d) })).workout;
+      replaceWorkout(w);
+      w = active();
+      S.restAt = null;
+    }
+    if (!S.cards || S.cardsFor !== w.id) { S.cards = buildCards(w); S.cardsFor = w.id; }
+    for (const it of d.items) if (!S.cards.some(c => c.ex === it.exercise)) S.cards.push(newCard(it.exercise, it.sets));
+    saveDraft();
+    S.tab = 'log';
+    S.view = null;
+    history.replaceState({ view: null, tab: S.tab }, '');
+    render();
+    window.scrollTo(0, 0);
   }),
   pick: () => openPicker(),
   closeSheet: () => closeSheet(),

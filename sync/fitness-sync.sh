@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Sync between your notes folder and the server:
 #   notes "Fitness Exercises.md"  ->  server exercises.md   (your editable list)
+#   notes "Fitness Programs.md"   ->  server programs.md    (your training programs)
 #   server Fitness.md             ->  notes Fitness.md      (read-only backup)
 #   server fitness.sqlite         ->  local snapshot        (full restorable backup)
 #
@@ -17,6 +18,9 @@ SSH=(ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o Serv
 
 if [ -f "$NOTES/Fitness Exercises.md" ]; then
   rsync -t --checksum -e "${SSH[*]}" "$NOTES/Fitness Exercises.md" "$HOST:fitness-data/exercises.md"
+fi
+if [ -f "$NOTES/Fitness Programs.md" ]; then
+  rsync -t --checksum -e "${SSH[*]}" "$NOTES/Fitness Programs.md" "$HOST:fitness-data/programs.md"
 fi
 
 # only touch local copies once the server has data

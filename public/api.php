@@ -2,6 +2,7 @@
 // JSON API for the fitness tracker. Data lives in DATA_DIR (outside the web root):
 //   fitness.sqlite   the database (source of truth)
 //   exercises.md     exercise list, pushed from the Obsidian vault
+//   programs.md      training programs, pushed from the Obsidian vault
 //   auth.json        password hash + failed-login log (created by setpass.php)
 //   Fitness.md       human-readable backup, regenerated after every write
 declare(strict_types=1);
@@ -88,6 +89,8 @@ function db(): PDO
     // last time a set or the workout itself changed (added after the first release)
     $cols = array_column($pdo->query('PRAGMA table_info(workouts)')->fetchAll(), 'name');
     if (!in_array('active_at', $cols)) $pdo->exec('ALTER TABLE workouts ADD COLUMN active_at INTEGER');
+    // "Program / Day" the workout was started from
+    if (!in_array('plan', $cols)) $pdo->exec("ALTER TABLE workouts ADD COLUMN plan TEXT NOT NULL DEFAULT ''");
     return $pdo;
 }
 
@@ -166,6 +169,38 @@ function exercises(): array
 }
 
 // ---------- data ----------
+
+// "# Program", "## Day", "- Exercise: 4×6-8" items (target optional), other text = note.
+// Headings without days (like the file title) are not programs.
+function programs(): array
+{
+    $progs = [];
+    $p = $d = null;
+    foreach (@file(DATA_DIR . '/programs.md', FILE_IGNORE_NEW_LINES) ?: [] as $line) {
+        if (preg_match('/^#\s+(.+?)\s*$/', $line, $m)) {
+            $p = count($progs);
+            $d = null;
+            $progs[] = ['name' => $m[1], 'note' => '', 'days' => []];
+        } elseif ($p !== null && preg_match('/^##\s+(.+?)\s*$/', $line, $m)) {
+            $d = count($progs[$p]['days']);
+            $progs[$p]['days'][] = ['name' => $m[1], 'note' => '', 'items' => []];
+        } elseif ($d !== null && preg_match('/^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$/', $line, $m)) {
+            $item = ['exercise' => $m[1], 'sets' => 0, 'reps' => ''];
+            if (preg_match('/^(.+?)\s*:\s*(\d+)\s*[×x]\s*(.+)$/u', $m[1], $t)) {
+                $item = ['exercise' => $t[1], 'sets' => (int)$t[2], 'reps' => $t[3]];
+            }
+            // (bw)/(sec) tags copied over from the exercise list are not part of the name
+            $item['exercise'] = preg_replace('/\s*\(\s*(?:sec|bw)(?:\s*,\s*(?:sec|bw))*\s*\)$/i', '', $item['exercise']);
+            $progs[$p]['days'][$d]['items'][] = $item;
+        } elseif ($p !== null && trim($line) !== '' && !preg_match('/^\s*(?:[-*+]|\d+[.)])\s/', $line)) {
+            if ($d === null) $note = &$progs[$p]['note'];
+            else $note = &$progs[$p]['days'][$d]['note'];
+            $note = trim($note . ' ' . trim($line));
+            unset($note);
+        }
+    }
+    return array_values(array_filter($progs, fn($x) => $x['days']));
+}
 
 function workouts(?int $id = null): array
 {
@@ -329,7 +364,7 @@ function write_md(): void
             $rows .= '| ' . str_replace('|', '\|', $name) . ' | ' . implode(', ', array_map(fn($s) => set_label($s, $i), $sets))
                 . ' | ' . ($load ? fmt_num($load) . ' kg' : '') . " |\n";
         }
-        $meta = ["$nsets sets", 'load ' . number_format($total, 0, '.', ' ') . ' kg'];
+        $meta = [...($w['plan'] !== '' ? [$w['plan']] : []), "$nsets sets", 'load ' . number_format($total, 0, '.', ' ') . ' kg'];
         if ($w['finished_at'] && $w['finished_at'] - $w['started_at'] < 6 * 3600) {
             $meta[] = round(($w['finished_at'] - $w['started_at']) / 60) . ' min';
         }
@@ -382,6 +417,7 @@ $changed = $method === 'GET' && $action === 'data' && finish_idle();
 $result = match ("$method $action") {
     'GET data' => [
         'exercises' => exercises(),
+        'programs' => programs(),
         'workouts' => workouts(),
         'goals' => (object)array_column(db()->query('SELECT exercise, target FROM goals')->fetchAll(), 'target', 'exercise'),
         'parts' => PARTS,
@@ -400,8 +436,8 @@ $result = match ("$method $action") {
         finish_idle();
         $open = db()->query('SELECT id FROM workouts WHERE finished_at IS NULL')->fetchColumn();
         if ($open) fail('A workout is already in progress');
-        db()->prepare('INSERT INTO workouts (date, started_at) VALUES (?, ?)')
-            ->execute([valid_date($in['date'] ?? ''), time()]);
+        db()->prepare('INSERT INTO workouts (date, started_at, active_at, plan) VALUES (?, ?, ?, ?)')
+            ->execute([valid_date($in['date'] ?? ''), time(), time(), mb_substr(trim((string)($in['plan'] ?? '')), 0, 200)]);
         $changed = true;
         return ['workout' => workout((int)db()->lastInsertId())];
     })(),

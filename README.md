@@ -29,8 +29,10 @@ Live instance: https://fitness.simonsmind.com (private, password protected).
   - days since last done, colour-coded (≤3d / ≤7d / older)
   - progress towards your goal
 - **Exercise pages:** progress chart (est. 1RM / heaviest / load), rep records, goal progress, full history.
+- **Programs:** write your training programs in `programs.md` (program → days → exercises with set × rep targets). The program tab lists them, marks the next day to do and when each day was last done, and starts a workout from a day with its exercises and target sets pre-loaded.
 - **Plain-text backup:** after every save the server writes `Fitness.md` (a best-lifts table plus every workout), ready to sync into a notes app such as Obsidian.
 - **Exercise list in markdown:** edit `exercises.md` to add exercises. No admin UI needed.
+- **Programs in markdown:** edit `programs.md`, see `programs.example.md` for the format.
 
 ## How it computes things
 
@@ -49,6 +51,7 @@ Live instance: https://fitness.simonsmind.com (private, password protected).
 | `sync/` | optional laptop ↔ server sync: script + systemd user units |
 | `deploy.sh` | rsync `public/` to the server over SSH |
 | `exercises.example.md` | starter exercise list |
+| `programs.example.md` | starter program (optional) |
 
 ## Host it on your own website
 
@@ -62,7 +65,7 @@ Live instance: https://fitness.simonsmind.com (private, password protected).
    define("DATA_DIR", "/home/you/fitness-data");   // absolute path to the data folder
    define("TIMEZONE", "Europe/Brussels");          // your timezone
    ```
-4. **Add your exercise list.** Copy `exercises.example.md` to the data folder as `exercises.md` and edit it. The format is `## Body part` headings with `- Exercise` items, and optional `(bw)` / `(sec)` / `(sec, bw)` tags.
+4. **Add your exercise list.** Copy `exercises.example.md` to the data folder as `exercises.md` and edit it. The format is `## Body part` headings with `- Exercise` items, and optional `(bw)` / `(sec)` / `(sec, bw)` tags. Optionally copy `programs.example.md` as `programs.md` too: `# Program`, `## Day`, `- Exercise: 4×6-8`.
 5. **Set your password:** `ssh -t yourserver bash fitness-data/setpass.sh`. Running it again changes the password and logs out all devices. After 5 wrong logins, login is locked for 15 minutes.
 6. **Install on your phone:** open the site, log in, then use "Add to Home Screen".
 
@@ -80,7 +83,7 @@ It uploads `public/` and bumps the service-worker cache so phones pick up the ne
 ## Optional: sync with your notes + local backups
 
 `sync/fitness-sync.sh` does three things:
-- pushes `Fitness Exercises.md` from your notes folder to the server as `exercises.md`
+- pushes `Fitness Exercises.md` and `Fitness Programs.md` from your notes folder to the server as `exercises.md` and `programs.md`
 - pulls `Fitness.md` back into your notes folder
 - saves a consistent snapshot of the database to `~/.local/share/fitness-tracker/`: the latest copy plus one per day, kept for 30 days
 
@@ -93,14 +96,14 @@ cp sync/fitness-sync.{service,timer,path} sync/fitness-sync-failed.service ~/.co
 # point it at your notes folder (kept out of the repo, in drop-ins)
 mkdir -p ~/.config/systemd/user/fitness-sync.{service,path}.d
 printf '[Service]\nEnvironment="FITNESS_NOTES_DIR=%%h/Notes/Fitness"\n' > ~/.config/systemd/user/fitness-sync.service.d/local.conf
-printf '[Path]\nPathChanged=\nPathChanged=%%h/Notes/Fitness/Fitness Exercises.md\n' > ~/.config/systemd/user/fitness-sync.path.d/local.conf
+printf '[Path]\nPathChanged=\nPathChanged=%%h/Notes/Fitness/Fitness Exercises.md\nPathChanged=%%h/Notes/Fitness/Fitness Programs.md\n' > ~/.config/systemd/user/fitness-sync.path.d/local.conf
 systemctl --user daemon-reload
 systemctl --user enable --now fitness-sync.timer fitness-sync.path
 ```
 
 Once enabled:
 - The timer syncs every 10 minutes.
-- The path unit pushes the exercise list as soon as you save it.
+- The path unit pushes the exercise list and programs as soon as you save them.
 - A run that fails or hangs (5 minute limit) shows a desktop notification (`notify-send`), and the next tick tries again.
 - To sync right away: `systemctl --user start fitness-sync`
 

@@ -1,9 +1,10 @@
 [Unit]
-Description=Push the exercise list as soon as it is edited
+Description=Push the exercise list and programs as soon as they are edited
 
 [Path]
 # real path is set in a local drop-in, see README
 PathChanged=%h/Documents/Fitness/Fitness Exercises.md
+PathChanged=%h/Documents/Fitness/Fitness Programs.md
 Unit=fitness-sync.service
 
 [Install]
