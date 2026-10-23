@@ -1,6 +1,6 @@
 # Original anatomical body figure for the Stats body maps, drawn from anatomy, not traced.
 # Right half authored (x >= 0), mirrored. Units match BODY in public/app.js: origin top centre,
-# about 150 x 460, an athletic 8-heads-tall figure (chin 56, nipples ~114, navel ~172, crotch ~246,
+# about 150 x 460, an athletic figure about 7.5 heads tall (chin 62, nipples ~114, navel ~172, crotch ~246,
 # knees ~328, feet 460). Each muscle is a smooth closed curve through anatomical landmarks.
 # Needs shapely. Run: python3 tools/body_figure.py [out.json]
 #   -> paste the front/back strings into BODY in app.js.
@@ -29,9 +29,9 @@ def strap(*pts, w=2.4): return LineString(catmull(list(pts) + list(reversed(pts[
 RIGHT = Polygon([(0, -10), (200, -10), (200, 500), (0, 500)])
 
 # ---------- silhouette (right half) ----------
-head = S((0, 4), (10, 6), (17, 14), (19, 27), (17, 40), (13, 50), (6, 56), (0, 57), (-6, 56), (-13, 50), (-17, 40),
-         (-19, 27), (-17, 14), (-10, 6))
-trunk = S((0, 54), (11, 56), (12, 68), (20, 77), (38, 83), (52, 88), (60, 98), (57, 116), (49, 124),
+head = S((0, 0), (12, 2), (20, 11), (22, 26), (20, 41), (15, 53), (7, 61), (0, 62), (-7, 61), (-15, 53), (-20, 41),
+         (-22, 26), (-20, 11), (-12, 2))
+trunk = S((0, 56), (15, 57), (16, 66), (24, 76), (38, 83), (52, 88), (60, 98), (57, 116), (49, 124),
           (47, 140), (44, 162), (41, 180), (41, 196), (45, 214), (50, 232), (53, 252), (53, 278), (50, 304),
           (45, 324), (43, 340), (47, 358), (45, 384), (38, 408), (33, 426), (37, 440), (41, 452), (34, 459),
           (19, 459), (16, 446), (18, 430), (20, 424), (16, 400), (13, 376), (14, 354), (15, 338), (12, 322),
@@ -70,8 +70,8 @@ def ab(y0, y1, w0, w1, sag=1.2):
              (w1 * 0.55, y1), (1.8, y1 - 0.6))
 
 front = finish([
-    ('neck', S((4, 59), (10, 57), (13, 61), (8, 72), (4, 81), (2, 79), (3, 70))),                # sternocleidomastoid
-    ('traps', S((12, 63), (15, 70), (24, 78), (40, 84), (47, 88), (34, 88), (22, 85), (14, 78))),
+    ('neck', S((5, 63), (12, 61), (15, 65), (10, 74), (5, 82), (3, 80), (4, 72))),               # sternocleidomastoid
+    ('traps', S((15, 64), (18, 70), (27, 78), (40, 84), (47, 88), (34, 88), (24, 86), (17, 79))),
     ('frontDelt', DELT.intersection(FRONT_HALF)),
     ('sideDelt', DELT.difference(FRONT_HALF)),
     ('chest', S((2, 92), (14, 89), (30, 89), (42, 92), (50, 100), (52, 108), (47, 114), (40, 121), (31, 127),
@@ -106,7 +106,7 @@ front = finish([
 ])
 
 back = finish([
-    ('traps', S((2, 47), (8, 50), (11, 63), (18, 75), (34, 81), (51, 88), (46, 94), (32, 98), (24, 110),
+    ('traps', S((2, 54), (10, 56), (15, 64), (22, 75), (34, 81), (51, 88), (46, 94), (32, 98), (24, 110),
                 (17, 132), (9, 156), (2, 170))),
     ('rearDelt', DELT.intersection(FRONT_HALF)),
     ('sideDelt', DELT.difference(FRONT_HALF)),
