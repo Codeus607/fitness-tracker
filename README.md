@@ -30,6 +30,7 @@ Live instance: https://fitness.simonsmind.com (private, password protected).
   - progress towards your goal
 - **Exercise pages:** progress chart (est. 1RM / heaviest / load), rep records, goal progress, full history.
 - **Programs:** write your training programs in `programs.md` (program → days → exercises with set × rep targets). The program tab lists them, marks the next day to do and when each day was last done, and starts a workout from a day with its exercises and target sets pre-loaded.
+- **Monthly report by email:** on the 1st, last month's report is emailed to you and saved in your notes: load summary, month-to-month comparison, load per body part, personal records, and what went well / what to improve (fixed rules: consistency vs your program, load trend, stalled lifts, low-volume body parts, long breaks).
 - **Plain-text backup:** after every save the server writes `Fitness.md` (a best-lifts table plus every workout), ready to sync into a notes app such as Obsidian.
 - **Exercise list in markdown:** edit `exercises.md` to add exercises. No admin UI needed.
 - **Programs in markdown:** edit `programs.md`, see `programs.example.md` for the format.
@@ -47,6 +48,7 @@ Live instance: https://fitness.simonsmind.com (private, password protected).
 |---|---|
 | `public/` | the app: upload this to your web folder |
 | `public/api.php` | JSON API (PHP + SQLite), also writes the `Fitness.md` backup |
+| `public/report.php` | monthly report, command line only (`php report.php [YYYY-MM] [--send]`) |
 | `server/setpass.sh`, `setpass.php` | set the login password (run on the server) |
 | `sync/` | optional laptop ↔ server sync: script + systemd user units |
 | `deploy.sh` | rsync `public/` to the server over SSH |
@@ -75,6 +77,26 @@ Live instance: https://fitness.simonsmind.com (private, password protected).
 
 **Moving to a new host:** set it up as above, then copy `fitness.sqlite` into the new data folder. That one file holds your whole history.
 
+## Optional: monthly report by email
+
+`report.php` builds the report of a month. It only runs from the command line (the web server refuses it).
+
+1. Add the addresses to `config.php` on the server. Send from an address on your own domain, or the mail may land in spam:
+   ```php
+   define("REPORT_EMAIL", "you@example.com");     // where the report goes
+   define("REPORT_FROM", "fitness@example.com");  // sender
+   ```
+2. Try it: `ssh yourserver php <web folder>/report.php 2026-10` prints the report; add `--send` to email it.
+3. Schedule it from your laptop with `sync/fitness-report.sh`, which runs `report.php --send` for last month and saves the markdown as `Fitness Reports/YYYY-MM.md` in your notes folder. A month that already has a saved report is skipped (no second email), unless you pass `--force`.
+   ```sh
+   cp sync/fitness-report.{service,timer} sync/fitness-failed@.service ~/.config/systemd/user/
+   mkdir -p ~/.config/systemd/user/fitness-report.service.d
+   printf '[Service]\nEnvironment="FITNESS_NOTES_DIR=%%h/Notes/Fitness"\n' > ~/.config/systemd/user/fitness-report.service.d/local.conf
+   systemctl --user daemon-reload
+   systemctl --user enable --now fitness-report.timer
+   ```
+   It runs on the 1st at 09:00, or at the next boot if the laptop was off. Shared hosting with cron access can run `report.php --send` directly instead.
+
 ## Deploying updates
 
 Set `HOST` (an SSH alias from `~/.ssh/config`) and `WEB` (the web folder) in `deploy.sh`, then run `./deploy.sh`.
@@ -92,7 +114,7 @@ You configure it with environment variables: `FITNESS_NOTES_DIR`, `FITNESS_BACKU
 To run it automatically on Linux with systemd:
 
 ```sh
-cp sync/fitness-sync.{service,timer,path} sync/fitness-sync-failed.service ~/.config/systemd/user/
+cp sync/fitness-sync.{service,timer,path} sync/fitness-failed@.service ~/.config/systemd/user/
 # point it at your notes folder (kept out of the repo, in drop-ins)
 mkdir -p ~/.config/systemd/user/fitness-sync.{service,path}.d
 printf '[Service]\nEnvironment="FITNESS_NOTES_DIR=%%h/Notes/Fitness"\n' > ~/.config/systemd/user/fitness-sync.service.d/local.conf

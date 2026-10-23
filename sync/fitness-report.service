@@ -1,0 +1,9 @@
+[Unit]
+Description=Email the monthly fitness report and save it in the vault
+After=network-online.target
+OnFailure=fitness-failed@%n.service
+
+[Service]
+Type=oneshot
+TimeoutStartSec=5min
+ExecStart=%h/Documents/FitnessTracker-Project/sync/fitness-report.sh

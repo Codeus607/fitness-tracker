@@ -1,6 +1,0 @@
-[Unit]
-Description=Tell the user the fitness sync failed
-
-[Service]
-Type=oneshot
-ExecStart=notify-send -u critical -a "Fitness sync" "Fitness sync failed" "Check: journalctl --user -u fitness-sync"

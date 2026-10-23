@@ -395,6 +395,9 @@ function write_md(): void
     rename($tmp, DATA_DIR . '/Fitness.md');
 }
 
+// report.php reuses the functions above from the command line
+if (defined('FITNESS_CLI')) return;
+
 // ---------- routing ----------
 
 $action = $_GET['a'] ?? '';

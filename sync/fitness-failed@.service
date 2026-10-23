@@ -1,0 +1,6 @@
+[Unit]
+Description=Tell the user %i failed
+
+[Service]
+Type=oneshot
+ExecStart=notify-send -u critical -a "Fitness" "%i failed" "Check: journalctl --user -u %i"

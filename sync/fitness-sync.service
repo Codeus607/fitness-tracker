@@ -1,7 +1,7 @@
 [Unit]
 Description=Sync fitness tracker files with the Obsidian vault
 After=network-online.target
-OnFailure=fitness-sync-failed.service
+OnFailure=fitness-failed@%n.service
 
 [Service]
 Type=oneshot

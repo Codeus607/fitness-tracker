@@ -2,9 +2,9 @@ RewriteEngine On
 RewriteCond %{HTTPS} off
 RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
-<Files "config.php">
+<FilesMatch "^(config|report)\.php$">
   Require all denied
-</Files>
+</FilesMatch>
 
 <IfModule LiteSpeed>
   CacheDisable public /
