@@ -1,7 +1,7 @@
 <?php
 // Monthly report, run from the command line (not reachable over the web, see .htaccess):
-//   php report.php [YYYY-MM] [--send]
-// Prints the report of that month (default: last month) as markdown.
+//   php report.php [YYYY-MM] [--send] [--html]
+// Prints the report of that month (default: last month) as markdown (--html: the email's HTML instead).
 // --send also emails it to REPORT_EMAIL (and from REPORT_FROM), defined in config.php.
 declare(strict_types=1);
 
@@ -107,7 +107,9 @@ foreach ($sessions as $ex => $list) {
     $older = array_slice($list, 0, -STALL_SESSIONS);
     $best = array_reduce($older, fn($b, $x) => !$b || score($x['best'], $i) > score($b, $i) ? $x['best'] : $b);
     $recent = array_slice($list, -STALL_SESSIONS);
-    if (!array_filter($recent, fn($x) => score($x['best'], $i) > score($best, $i))) $stalled[] = $ex;
+    if (array_filter($recent, fn($x) => score($x['best'], $i) > score($best, $i))) continue;
+    $top = array_reduce($recent, fn($b, $x) => !$b || score($x['best'], $i) > score($b, $i) ? $x['best'] : $b);
+    $stalled[$ex] = ['best' => $best, 'recent' => $top];
 }
 
 // program: workouts per week planned (days of the first program), and days not done this month
@@ -136,48 +138,16 @@ $bwAt = function (string $m) {
 $bwCur = $bwAt($month);
 $bwOld = $bwAt($prev);
 
-// ---------- what went well / what to improve ----------
-
-$pct = fn($a, $b) => $b ? ($a - $b) / $b * 100 : null;
-$good = $improve = [];
-
-if ($hasPrev) {
-    $dl = $pct($cur['load'], $old['load']);
-    if ($dl >= 5) $good[] = sprintf('Total load went up %d%% compared to %s.', round($dl), month_label($prev));
-    elseif ($dl <= -5) $improve[] = sprintf('Total load dropped %d%% compared to %s.', round(-$dl), month_label($prev));
-    if ($cur['workouts'] > $old['workouts']) $good[] = "You trained more often: {$cur['workouts']} workouts against {$old['workouts']}.";
-    elseif ($cur['workouts'] < $old['workouts']) $improve[] = "Fewer workouts than last month: {$cur['workouts']} against {$old['workouts']}.";
-}
-if ($plan) {
-    $planned = count($plan['days']);
-    $line = sprintf('%.1f workouts a week on average, for %d planned in "%s".', $perWeek, $planned, $plan['name']);
-    if ($perWeek >= $planned - 0.25) $good[] = "Consistent: $line";
-    else $improve[] = "Consistency: $line";
-    $missed = array_values(array_filter($plan['days'], fn($d) => !isset($doneDays[planName($plan, $d)])));
-    if ($missed && count($missed) < $planned) {
-        $improve[] = 'Program days never done this month: ' . implode(', ', array_map(fn($d) => $d['name'], $missed)) . '.';
-    }
-}
-if ($prs) $good[] = count($prs) . ' personal record' . (count($prs) > 1 ? 's' : '') . ': ' . implode(', ', array_keys($prs)) . '.';
-elseif ($cur['workouts']) $improve[] = 'No personal records this month.';
-if ($new) $good[] = count($new) > 8 ? count($new) . ' exercises logged for the first time.' : 'New exercises tried: ' . implode(', ', $new) . '.';
-$weak = array_keys(array_filter($cur['groups'], fn($g) => $g['sets'] < LOW_SETS));
-$weak = array_values(array_filter($weak, fn($g) => $g !== 'Other'));
-if ($cur['workouts'] && $weak) {
-    $improve[] = 'Little volume for ' . implode(', ', array_map(fn($g) => "$g ({$cur['groups'][$g]['sets']} sets)", $weak))
-        . sprintf(', under %d working sets in the month.', LOW_SETS);
-} elseif ($cur['workouts']) {
-    $good[] = sprintf('Every body part got at least %d working sets.', LOW_SETS);
-}
-if ($stalled) $improve[] = sprintf('No progress in the last %d sessions: ', STALL_SESSIONS) . implode(', ', $stalled) . '. Try adding a rep or 2.5 kg, or swap the variation.';
-if ($gap['days'] > 7) $improve[] = "Longest break: {$gap['days']} days ({$gap['from']} → {$gap['to']}).";
-if (!$cur['workouts']) $improve[] = 'No workouts logged this month.';
-
-// ---------- report ----------
+// ---------- helpers ----------
 
 function month_label(string $m): string
 {
     return date('F Y', strtotime("$m-15"));
+}
+
+function month_name(string $m): string
+{
+    return date('F', strtotime("$m-15"));
 }
 
 function planName(array $p, array $d): string
@@ -190,75 +160,274 @@ function kg(float $n): string
     return number_format($n, 0, '.', ' ') . ' kg';
 }
 
+function tonnes(float $n): string
+{
+    return fmt_num(round($n / 1000, 1)) . ' tonnes';
+}
+
 // change between two numbers: "+12%" (or "+0.4 kg" for small absolute values)
 function delta(?float $now, ?float $was, string $unit = '%'): string
 {
-    if ($now === null || $was === null) return '—';
+    if ($now === null || $was === null) return '';
     if ($unit !== '%') {
         $d = $now - $was;
         return ($d > 0 ? '+' : ($d < 0 ? '−' : '±')) . fmt_num(abs(round($d, 1))) . $unit;
     }
-    if (!$was) return '—';
+    if (!$was) return '';
     $d = round(($now - $was) / $was * 100);
     return ($d > 0 ? '+' : ($d < 0 ? '−' : '±')) . abs($d) . '%';
 }
 
-$label = month_label($month);
-$doc = [['h1', "Fitness report — $label"]];
-
-$rows = [
-    ['Workouts', $cur['workouts'], $hasPrev ? $old['workouts'] : '—', $hasPrev ? delta($cur['workouts'], $old['workouts']) : '—'],
-    ['Active days', $cur['days'], $hasPrev ? $old['days'] : '—', $hasPrev ? delta($cur['days'], $old['days']) : '—'],
-    ['Total load', kg($cur['load']), $hasPrev ? kg($old['load']) : '—', $hasPrev ? delta($cur['load'], $old['load']) : '—'],
-    ['Working sets', $cur['sets'], $hasPrev ? $old['sets'] : '—', $hasPrev ? delta($cur['sets'], $old['sets']) : '—'],
-    ['Load per workout', $cur['workouts'] ? kg($cur['load'] / $cur['workouts']) : '—', $hasPrev ? kg($old['load'] / $old['workouts']) : '—',
-        $hasPrev && $cur['workouts'] ? delta($cur['load'] / $cur['workouts'], $old['load'] / $old['workouts']) : '—'],
-    ['Average duration', $cur['avg_min'] ? round($cur['avg_min']) . ' min' : '—', $hasPrev && $old['avg_min'] ? round($old['avg_min']) . ' min' : '—',
-        $hasPrev && $cur['avg_min'] && $old['avg_min'] ? delta($cur['avg_min'], $old['avg_min']) : '—'],
-];
-if ($bwCur !== null || $bwOld !== null) {
-    $rows[] = ['Body weight (end of month)', $bwCur !== null ? fmt_num($bwCur) . ' kg' : '—', $bwOld !== null ? fmt_num($bwOld) . ' kg' : '—', delta($bwCur, $bwOld, ' kg')];
+// colour of a change: up = good for every number in the report, except where it's neutral
+function trend(?float $now, ?float $was): string
+{
+    if ($now === null || $was === null || !$was || abs($now - $was) / $was < 0.02) return 'flat';
+    return $now > $was ? 'up' : 'down';
 }
-$doc[] = ['h2', 'Summary'];
-$doc[] = ['table', ['', month_label($month), month_label($prev), 'Change'], $rows];
 
-$doc[] = ['h2', 'Load per body part'];
-$doc[] = ['table', ['Body part', 'Working sets', 'Load', 'Load vs ' . date('M', strtotime("$prev-15"))], array_map(
-    fn($g) => [$g, $cur['groups'][$g]['sets'], kg($cur['groups'][$g]['load']),
-        $hasPrev ? delta($cur['groups'][$g]['load'], $old['groups'][$g]['load'] ?? 0) : '—'],
-    array_keys(array_filter($cur['groups'], fn($g, $name) => $g['sets'] || $name !== 'Other', ARRAY_FILTER_USE_BOTH))
-)];
+// the headline number of a set: est. 1RM, max reps for bodyweight, seconds for timed
+function metric(array $s, array $i): float
+{
+    return $i['timed'] || $i['bw'] ? (float)$s['reps'] : brzycki($s['weight'], $s['reps']);
+}
+
+// "about 2 city buses" for a total load
+function weight_of(float $kg): string
+{
+    foreach ([[150000, 'blue whale', 'blue whales'], [12000, 'city bus', 'city buses'], [6000, 'elephant', 'elephants'],
+              [1500, 'car', 'cars'], [450, 'grand piano', 'grand pianos']] as [$w, $one, $many]) {
+        if ($kg >= $w * 0.9) {
+            $n = round($kg / $w);
+            return $n <= 1 ? "about the weight of a $one" : "about the weight of $n $many";
+        }
+    }
+    return '';
+}
+
+function plural(int $n, string $one, ?string $many = null): string
+{
+    return "$n " . ($n === 1 ? $one : ($many ?? $one . 's'));
+}
+
+$label = month_label($month);
+$mName = month_name($month);
+$pName = month_name($prev);
+$firstMonth = !array_filter($ws, fn($w) => $w['date'] < "$month-01");
+
+// PRs ranked by how much the headline number improved
+$prList = [];
+foreach ($prs as $ex => $pr) {
+    $i = $infoOf($ex);
+    $a = metric($pr['was'], $i);
+    $b = metric($pr['now']['set'], $i);
+    $prList[] = ['ex' => $ex, 'i' => $i, 'was' => $pr['was'], 'now' => $pr['now'], 'gain' => $a ? ($b - $a) / $a * 100 : 0];
+}
+usort($prList, fn($x, $y) => $y['gain'] <=> $x['gain']);
+$prText = function (array $p): string {
+    $txt = set_label($p['was'], $p['i']) . ' → ' . set_label($p['now']['set'], $p['i']);
+    if (!$p['i']['timed'] && !$p['i']['bw']) {
+        $txt .= sprintf(', est. 1RM %s → %s kg', fmt_num(round(brzycki($p['was']['weight'], $p['was']['reps']), 1)),
+            fmt_num(round(brzycki($p['now']['set']['weight'], $p['now']['set']['reps']), 1)));
+    }
+    return $txt . ($p['gain'] > 0 ? sprintf(', +%d%%', round($p['gain'])) : '');
+};
+
+// working sets per week the program plans for each body part (one round of its days = one week)
+$planSets = [];
+if ($plan) foreach ($plan['days'] as $d) foreach ($d['items'] as $it) {
+    $g = $infoOf($it['exercise'])['group'];
+    $planSets[$g] = ($planSets[$g] ?? 0) + $it['sets'];
+}
+
+// ---------- what went well / what to improve: [title, explanation] ----------
+
+$pct = fn($a, $b) => $b ? ($a - $b) / $b * 100 : null;
+$good = $improve = [];
+$weeks = $daysInMonth / 7;
+
+if ($hasPrev) {
+    $dl = $pct($cur['load'], $old['load']);
+    if ($dl >= 5) {
+        $good[] = [sprintf('Load up %d%%', round($dl)), sprintf('You moved %s against %s in %s. Total load (reps × weight over all your working sets) '
+            . 'is the clearest sign you are doing more work over time, and doing more work over time is what makes muscles grow. '
+            . 'Keep building it in small steps: an extra rep or an extra set before adding weight.', kg($cur['load']), kg($old['load']), $pName)];
+    } elseif ($dl <= -5) {
+        $improve[] = [sprintf('Load down %d%%', round(-$dl)), sprintf('You moved %s against %s in %s. A lighter month now and then is fine '
+            . '(a deload, holidays, a cold), but if it wasn\'t planned, look at what changed: fewer sessions, fewer sets, or lighter weights. '
+            . 'Next month, aim to at least match %s.', kg($cur['load']), kg($old['load']), $pName, kg($old['load'])), 'bringing your load back up'];
+    }
+    if ($cur['workouts'] > $old['workouts']) {
+        $good[] = ['More sessions', sprintf('%s against %d in %s. How often you train is the foundation everything else rests on: '
+            . 'this is the habit doing its job.', plural($cur['workouts'], 'workout'), $old['workouts'], $pName)];
+    } elseif ($cur['workouts'] < $old['workouts'] && !$plan) {
+        $improve[] = ['Fewer sessions', sprintf('%s against %d in %s. Pick fixed training days and treat them like appointments.',
+            plural($cur['workouts'], 'workout'), $old['workouts'], $pName), 'training more often'];
+    }
+}
+
+if ($plan && $cur['workouts']) {
+    $planned = count($plan['days']);
+    $expected = (int)round($planned * $weeks);
+    if ($perWeek >= $planned - 0.25) {
+        $good[] = ['Right on plan', sprintf('You averaged %.1f workouts a week, matching the %d days of "%s". Sticking to the plan is what lets '
+            . 'progress build up: each session starts where the last one stopped.', $perWeek, $planned, $plan['name'])];
+    } else {
+        $improve[] = [sprintf('Consistency: %.1f of %d sessions a week', $perWeek, $planned), sprintf('"%s" plans %d workouts a week, about %d in %s, '
+            . 'and you did %d. Missed sessions slow progress more than any choice of exercise or set scheme. Pick fixed days and treat them like '
+            . 'appointments. On a busy day, a short session with only the first two exercises still counts and keeps the habit alive.',
+            $plan['name'], $planned, $expected, $mName, $cur['workouts']), "getting all $planned sessions in every week"];
+    }
+    $missed = array_values(array_filter($plan['days'], fn($d) => !isset($doneDays[planName($plan, $d)])));
+    if ($missed && count($missed) < $planned) {
+        $improve[] = ['Skipped program days', implode(', ', array_map(fn($d) => $d['name'], $missed)) . (count($missed) > 1 ? ' were' : ' was')
+            . sprintf(' never done this month. Each day trains different muscles, so skipping one leaves a gap. The program tab always marks '
+            . 'the next day to do: following it rotates you through all %d.', $planned), 'rotating through every program day'];
+    }
+}
+
+if ($prList) {
+    $top = array_slice($prList, 0, 3);
+    $good[] = [plural(count($prList), 'personal record'), (count($prList) > 3 ? 'Biggest jumps: ' : '')
+        . implode('; ', array_map(fn($p) => "{$p['ex']} ({$prText($p)})", $top)) . '. '
+        . 'A new record means your body adapted to the training you gave it: the plan is working for these lifts.'];
+} elseif ($cur['workouts'] && !$firstMonth) {
+    $improve[] = ['No personal records', 'None of your lifts beat their previous best this month. Try double progression: pick a rep range '
+        . '(for example 8–12), and once you reach the top of it on every set, add 2.5 kg the next session and build the reps back up.', 'beating at least one record'];
+}
+
+if ($new) {
+    $good[] = [count($new) > 8 ? plural(count($new), 'new exercise') : 'New exercises', ($firstMonth
+        ? sprintf('This month set your starting point on %s. From now on each of them has a record to beat, so next month\'s report '
+            . 'can show real progress and trends.', plural(count($new), 'exercise'))
+        : 'You tried ' . implode(', ', $new) . '. New movements hit muscles from new angles; give them a few sessions before judging them.')];
+}
+
+$weak = array_values(array_filter(array_keys($cur['groups']), fn($g) => $g !== 'Other' && $cur['groups'][$g]['sets'] < LOW_SETS));
+if ($cur['workouts'] && !$weak) {
+    $good[] = ['Every body part trained', sprintf('All body parts got at least %d working sets. Balanced volume keeps your physique in proportion '
+        . 'and lowers the risk of injury from one side being much stronger than the other.', LOW_SETS)];
+}
+if ($cur['workouts']) foreach ($weak as $g) {
+    $n = $cur['groups'][$g]['sets'];
+    $improve[] = ["$g: only " . plural($n, 'working set'), sprintf('That is about %s a week. To grow a muscle group, 10 to 20 hard sets a week '
+        . 'is the usual target. ', fmt_num(round($n / $weeks, 1)) . ' set' . (round($n / $weeks, 1) == 1 ? '' : 's'))
+        . (!empty($planSets[$g])
+            ? sprintf('Your program plans %d sets a week for %s, so following it fully fixes this on its own.', $planSets[$g], strtolower($g))
+            : 'Add two or three exercises for it to your week.'), 'giving ' . strtolower($g) . ' more work'];
+}
+
+if ($stalled) {
+    $improve[] = [count($stalled) > 1 ? 'Stalled lifts' : 'A stalled lift', implode('; ', array_map(function ($ex, $s) use ($infoOf) {
+        $i = $infoOf($ex);
+        return sprintf('%s: best %s, the last %d sessions topped out at %s', $ex, set_label($s['best'], $i), STALL_SESSIONS, set_label($s['recent'], $i));
+    }, array_keys($stalled), $stalled)) . '. When a lift stops moving, check sleep and food first. Then aim for one more rep before adding weight, '
+        . 'take a lighter week (about 10% less), or swap to a close variation for 4 to 6 weeks.', 'getting ' . array_key_first($stalled) . ' moving again'];
+}
+
+if ($gap['days'] > 7) {
+    $improve[] = [plural($gap['days'], 'day') . ' without training', sprintf('Between %s and %s. Breaks happen; what matters is restarting '
+        . 'quickly. After more than a week off, go 5 to 10%% lighter for one session to ease back in.', $gap['from'], $gap['to']), 'keeping breaks short'];
+}
+if (!$cur['workouts']) {
+    $improve[] = ['No workouts logged', 'Nothing was logged this month. Start small: one session this week, then build back up to your plan.', 'getting back into the gym'];
+}
+
+// ---------- motivation: an opener that fits the month, a fact, a closing line that changes every month ----------
+
+$closers = [
+    'Strength is built the way it is lost: one session at a time. Show up for the next one.',
+    'Nobody sees the single great workout. They see the result of a hundred ordinary ones. Keep stacking them.',
+    'Progress rarely feels like progress while it is happening. Read this report again in six months and you will see it.',
+    'The bar does not care how motivated you feel. Turn up, do the work, and let the numbers move.',
+    'Small wins compound: one more rep, 2.5 more kilos, one more session than last month.',
+    'Discipline is choosing what you want most over what you want right now. This month, choose the gym.',
+    'Your future self is built in the sessions you almost skipped.',
+    'Every set you log is proof of the person you are becoming. Give yourself more proof this month.',
+];
+$closer = $closers[crc32($month) % count($closers)];
+
+if (!$cur['workouts']) {
+    $motivation = "$mName was a quiet month, and that is okay: every comeback starts with a single session. "
+        . "Your records are still there, waiting to be beaten. $closer";
+} else {
+    $great = ($hasPrev && ($pct($cur['load'], $old['load']) ?? 0) >= 5) || count($prList) >= 3;
+    $tough = $hasPrev && ($pct($cur['load'], $old['load']) ?? 0) <= -5;
+    $opener = $firstMonth ? "$mName is where it all started: " . plural($cur['workouts'], 'workout') . ' logged and a starting point for every lift.'
+        : ($great ? "$mName was a strong month, and the numbers prove it."
+        : ($tough ? "$mName was a harder month, and that is part of the process too: no one progresses in a straight line."
+        : "$mName was a steady month: you kept showing up."));
+    $fact = sprintf('You moved %s in total, %s', tonnes($cur['load']), weight_of($cur['load']) ?: 'every kilo of it earned');
+    $fact .= $prList ? sprintf(', and set %s, the biggest on %s.', plural(count($prList), 'personal record'), $prList[0]['ex']) : '.';
+    $focus = $improve ? " For the month ahead, put your energy into {$improve[0][2]}." : '';
+    $motivation = "$opener $fact$focus $closer";
+}
+
+// ---------- report ----------
+
+$doc = [['header', $label]];
+$doc[] = ['motivation', $motivation];
+
+$kpi = fn($label, $value, $now, $was, $neutral = false) => [$label, $value,
+    $hasPrev && $now !== null && $was !== null ? trim(delta($now, $was)) : '', $neutral ? 'flat' : trend($now, $was)];
+$tiles = [
+    $kpi('Workouts', $cur['workouts'], $cur['workouts'], $old['workouts']),
+    $kpi('Active days', $cur['days'], $cur['days'], $old['days']),
+    $kpi('Total load', tonnes($cur['load']), $cur['load'], $old['load']),
+    $kpi('Working sets', $cur['sets'], $cur['sets'], $old['sets']),
+    $kpi('Load / workout', $cur['workouts'] ? kg($cur['load'] / $cur['workouts']) : '—',
+        $cur['workouts'] ? $cur['load'] / $cur['workouts'] : null, $old['workouts'] ? $old['load'] / $old['workouts'] : null),
+    $kpi('Avg duration', $cur['avg_min'] ? round($cur['avg_min']) . ' min' : '—', $cur['avg_min'] ?: null, $old['avg_min'] ?: null, true),
+];
+if ($bwCur !== null) {
+    $tiles[] = ['Body weight', fmt_num($bwCur) . ' kg', $bwOld !== null ? delta($bwCur, $bwOld, ' kg') : '', 'flat'];
+}
+$doc[] = ['h2', 'The month in numbers'];
+$doc[] = ['kpis', $tiles, $hasPrev ? "vs $pName" : ''];
+
+$groups = array_filter($cur['groups'], fn($g, $name) => $g['sets'] || $name !== 'Other', ARRAY_FILTER_USE_BOTH);
+$maxSets = max(1, ...array_column($groups, 'sets'));
+$doc[] = ['h2', 'Working sets per body part'];
+$doc[] = ['bars', array_map(fn($name, $g) => [$name, $g['sets'] / $maxSets, $g['sets'] . ' sets · ' . kg($g['load'])
+    . ($hasPrev && ($old['groups'][$name]['load'] ?? 0) ? ' (' . delta($g['load'], $old['groups'][$name]['load']) . ')' : ''),
+    $g['sets'] < LOW_SETS && $name !== 'Other' ? 'warn' : 'normal'], array_keys($groups), $groups)];
+$doc[] = ['small', sprintf('Under %d working sets in the month counts as low (red bars).', LOW_SETS)];
 
 // month to month: the last 6 months that have data, up to this one
-$trend = [];
+$trendRows = [];
 for ($k = 5; $k >= 0; $k--) {
     $m = date('Y-m', strtotime("$month-01 -$k month"));
     $st = $m === $month ? $cur : month_stats($ws, $m, $infoOf, $groupNames);
-    if ($st['workouts'] || $trend) $trend[] = [month_label($m), $st['workouts'], $st['sets'], kg($st['load'])];
+    if ($st['workouts'] || $trendRows) $trendRows[] = [$m, $st];
 }
+$maxLoad = max(1, ...array_map(fn($r) => $r[1]['load'], $trendRows));
 $doc[] = ['h2', 'Month to month'];
-$doc[] = ['table', ['Month', 'Workouts', 'Working sets', 'Total load'], $trend];
+$doc[] = ['bars', array_map(fn($r) => [date('M Y', strtotime("{$r[0]}-15")), $r[1]['load'] / $maxLoad,
+    tonnes($r[1]['load']) . ' · ' . plural($r[1]['workouts'], 'workout'), $r[0] === $month ? 'hi' : 'muted'], $trendRows)];
+if (count($trendRows) === 1) $doc[] = ['small', 'The first month with data: next month this becomes a comparison.'];
 
 $doc[] = ['h2', 'Personal records'];
-if ($prs) {
-    $doc[] = ['table', ['Exercise', 'New best', 'Starting best', 'Date'], array_map(function ($ex, $pr) use ($infoOf) {
-        $i = $infoOf($ex);
-        $e1 = fn($s) => $i['timed'] || $i['bw'] ? '' : ' (1RM ' . fmt_num(round(brzycki($s['weight'], $s['reps']), 1)) . ')';
-        return [$ex, set_label($pr['now']['set'], $i) . $e1($pr['now']['set']), set_label($pr['was'], $i) . $e1($pr['was']), $pr['now']['date']];
-    }, array_keys($prs), $prs)];
+if ($prList) {
+    $doc[] = ['prs', array_map(fn($p) => [$p['ex'], set_label($p['was'], $p['i']), set_label($p['now']['set'], $p['i']),
+        $p['gain'] > 0 ? sprintf('+%d%%', round($p['gain'])) : '', date('j M', strtotime($p['now']['date']))], $prList)];
+    $doc[] = ['small', 'Change = estimated 1RM (Brzycki), or reps for bodyweight exercises.'];
 } else {
-    $doc[] = ['p', 'No new personal records this month.'];
+    $doc[] = ['p', $firstMonth ? 'No records yet: this month is your starting point.' : 'No new personal records this month.'];
 }
-if ($new && count($new) <= 8) $doc[] = ['p', 'First time logged (no record to beat yet): ' . implode(', ', $new) . '.'];
 
 $doc[] = ['h2', 'What went well'];
-$doc[] = $good ? ['ul', $good] : ['p', 'Nothing stood out this month.'];
+$doc[] = $good ? ['insights', 'good', $good] : ['p', 'Nothing stood out this month.'];
 $doc[] = ['h2', 'What to improve'];
-$doc[] = $improve ? ['ul', $improve] : ['p', 'Nothing to flag. Keep it up.'];
-$doc[] = ['small', 'Generated by fitness.simonsmind.com on ' . date('Y-m-d H:i') . '. The advice follows fixed rules: '
-    . sprintf('under %d working sets a month per body part is low, %d sessions without a better best set is a stall, a break of more than 7 days is flagged.', LOW_SETS, STALL_SESSIONS)];
+$doc[] = $improve ? ['insights', 'improve', $improve] : ['p', 'Nothing to flag. Keep it up.'];
+$doc[] = ['footer', 'Generated by fitness.simonsmind.com on ' . date('Y-m-d H:i') . '. The feedback follows fixed rules: '
+    . sprintf('under %d working sets a month for a body part is low, %d sessions without beating your best is a stall, a break of more than 7 days is flagged.', LOW_SETS, STALL_SESSIONS)];
 
 // ---------- output ----------
+
+function md_bar(float $frac, int $width = 16): string
+{
+    $n = (int)round($frac * $width);
+    return str_repeat('█', $n) . str_repeat('░', $width - $n);
+}
 
 function to_md(array $doc): string
 {
@@ -266,43 +435,91 @@ function to_md(array $doc): string
     $out = '';
     foreach ($doc as $b) {
         $out .= match ($b[0]) {
-            'h1' => "# {$b[1]}\n\n",
+            'header' => "# Fitness report — {$b[1]}\n\n",
+            'motivation' => "> {$b[1]}\n\n",
             'h2' => "## {$b[1]}\n\n",
             'p' => "{$b[1]}\n\n",
-            'small' => "> {$b[1]}\n",
-            'ul' => implode('', array_map(fn($x) => "- $x\n", $b[1])) . "\n",
-            'table' => '| ' . implode(' | ', array_map($cell, $b[1])) . " |\n|" . str_repeat('---|', count($b[1])) . "\n"
-                . implode('', array_map(fn($r) => '| ' . implode(' | ', array_map($cell, $r)) . " |\n", $b[2])) . "\n",
+            'small' => "*{$b[1]}*\n\n",
+            'footer' => "---\n*{$b[1]}*\n",
+            'kpis' => "|  |  | {$b[2]} |\n|---|---|---|\n" . implode('', array_map(fn($k) => "| {$k[0]} | **{$k[1]}** | {$k[2]} |\n", $b[1])) . "\n",
+            'bars' => "|  |  |  |\n|---|---|---|\n" . implode('', array_map(fn($r) => "| {$cell($r[0])} | `" . md_bar($r[1]) . "` | {$r[2]} |\n", $b[1])) . "\n",
+            'prs' => "| Exercise | Before | New best | Change | Date |\n|---|---|---|---|---|\n"
+                . implode('', array_map(fn($r) => '| ' . implode(' | ', array_map($cell, $r)) . " |\n", $b[1])) . "\n",
+            'insights' => implode('', array_map(fn($x) => "- **{$x[0]}.** {$x[1]}\n", $b[2])) . "\n",
         };
     }
     return $out;
 }
 
+// email-safe HTML: inline styles and tables only (no SVG, no external CSS)
 function to_html(array $doc): string
 {
     $e = fn($v) => htmlspecialchars((string)$v, ENT_QUOTES);
-    $td = 'padding:6px 10px;border-bottom:1px solid #d8dee9;text-align:left';
+    $c = ['bg' => '#eceff4', 'card' => '#ffffff', 'ink' => '#2e3440', 'muted' => '#6b778d', 'line' => '#e5e9f0', 'dark' => '#2e3440',
+        'accent' => '#88c0d0', 'blue' => '#5e81ac', 'green' => '#3f8f4a', 'red' => '#bf616a', 'orange' => '#d08770', 'soft' => '#c9d4e3'];
+    $trendColor = ['up' => $c['green'], 'down' => $c['red'], 'flat' => $c['muted']];
+    $mono = "'JetBrains Mono',Menlo,Consolas,monospace";
+    $bar = function (float $frac, string $color) use ($c) {
+        $w = max(0, min(100, (int)round($frac * 100)));
+        return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse"><tr>'
+            . ($w ? "<td width=\"$w%\" style=\"background:$color;height:12px;border-radius:6px;font-size:0;line-height:0\">&nbsp;</td>" : '')
+            . ($w < 100 ? "<td style=\"background:{$c['line']};height:12px;border-radius:6px;font-size:0;line-height:0\">&nbsp;</td>" : '')
+            . '</tr></table>';
+    };
     $out = '';
     foreach ($doc as $b) {
         $out .= match ($b[0]) {
-            'h1' => "<h1 style=\"font-size:22px;color:#2e3440;margin:0 0 16px\">{$e($b[1])}</h1>",
-            'h2' => "<h2 style=\"font-size:16px;color:#5e81ac;margin:24px 0 8px\">{$e($b[1])}</h2>",
-            'p' => "<p style=\"margin:0 0 10px\">{$e($b[1])}</p>",
-            'small' => "<p style=\"margin:28px 0 0;color:#7b88a1;font-size:12px\">{$e($b[1])}</p>",
-            'ul' => '<ul style="margin:0 0 10px;padding-left:20px">' . implode('', array_map(fn($x) => "<li style=\"margin:4px 0\">{$e($x)}</li>", $b[1])) . '</ul>',
-            'table' => '<table style="border-collapse:collapse;width:100%;font-size:14px"><tr>'
-                . implode('', array_map(fn($h) => "<th style=\"$td;color:#4c566a;font-weight:600\">{$e($h)}</th>", $b[1])) . '</tr>'
-                . implode('', array_map(fn($r) => '<tr>' . implode('', array_map(fn($c) => "<td style=\"$td\">{$e($c)}</td>", $r)) . '</tr>', $b[2]))
-                . '</table>',
+            'header' => "<tr><td style=\"background:{$c['dark']};padding:26px 28px 22px;border-radius:12px 12px 0 0\">"
+                . "<div style=\"font-family:$mono;font-size:13px;color:{$c['accent']}\">~/SimonsMind/fitness<span style=\"color:#d8dee9\">_</span></div>"
+                . "<div style=\"font-size:26px;font-weight:700;color:#eceff4;margin-top:10px\">{$e($b[1])}</div>"
+                . "<div style=\"font-size:14px;color:#a9b6cc;margin-top:2px\">Monthly training report</div></td></tr>",
+            'motivation' => "<tr><td style=\"padding:22px 28px 4px\"><div style=\"background:#f2f6fa;border-left:4px solid {$c['accent']};"
+                . "border-radius:0 8px 8px 0;padding:14px 16px;font-size:15px;line-height:1.6;color:{$c['ink']}\">{$e($b[1])}</div></td></tr>",
+            'h2' => "<tr><td style=\"padding:24px 28px 10px\"><div style=\"font-size:17px;font-weight:700;color:{$c['ink']}\">"
+                . "<span style=\"color:{$c['accent']};font-family:$mono\">&gt;</span> {$e($b[1])}</div></td></tr>",
+            'p' => "<tr><td style=\"padding:0 28px 6px;font-size:14px;color:{$c['ink']}\">{$e($b[1])}</td></tr>",
+            'small' => "<tr><td style=\"padding:6px 28px 0;font-size:12px;color:{$c['muted']}\">{$e($b[1])}</td></tr>",
+            'footer' => "<tr><td style=\"padding:28px 28px 26px;font-size:11px;line-height:1.5;color:{$c['muted']};border-top:1px solid {$c['line']}\">{$e($b[1])}</td></tr>",
+            'kpis' => '<tr><td style="padding:0 22px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:6px">'
+                . implode('', array_map(fn($row) => '<tr>' . implode('', array_map(fn($k) => "<td width=\"33%\" valign=\"top\" style=\"background:#f6f8fb;border:1px solid {$c['line']};border-radius:10px;padding:12px 12px 10px\">"
+                    . "<div style=\"font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:{$c['muted']}\">{$e($k[0])}</div>"
+                    . "<div style=\"font-size:20px;font-weight:700;color:{$c['ink']};margin-top:4px\">{$e($k[1])}</div>"
+                    . "<div style=\"font-size:12px;font-weight:600;color:{$trendColor[$k[3]]};margin-top:2px;min-height:15px\">"
+                    . ($k[2] !== '' ? ($k[3] === 'up' ? '▲ ' : ($k[3] === 'down' ? '▼ ' : '')) . $e($k[2]) . ($b[2] ? " <span style=\"font-weight:400;color:{$c['muted']}\">{$e($b[2])}</span>" : '') : '&nbsp;')
+                    . '</div></td>', $row)) . str_repeat('<td width="33%"></td>', 3 - count($row)) . '</tr>', array_chunk($b[1], 3)))
+                . '</table></td></tr>',
+            'bars' => '<tr><td style="padding:0 28px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">'
+                . implode('', array_map(fn($r) => '<tr>'
+                    . "<td width=\"78\" style=\"padding:6px 8px 6px 0;font-size:13px;color:{$c['ink']}\">{$e($r[0])}</td>"
+                    . '<td style="padding:6px 0">' . $bar($r[1], ['normal' => $c['accent'], 'warn' => $c['red'], 'hi' => $c['blue'], 'muted' => $c['soft']][$r[3]]) . '</td>'
+                    . "<td width=\"40%\" style=\"padding:6px 0 6px 10px;font-size:12px;line-height:1.35;color:{$c['muted']}\">{$e($r[2])}</td></tr>", $b[1]))
+                . '</table></td></tr>',
+            'prs' => '<tr><td style="padding:0 28px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:13px">'
+                . "<tr>" . implode('', array_map(fn($h) => "<th align=\"left\" style=\"padding:6px 8px 6px 0;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:{$c['muted']};border-bottom:2px solid {$c['line']}\">$h</th>", ['Exercise', 'Before', 'New best', ''])) . '</tr>'
+                . implode('', array_map(fn($r) => "<tr><td style=\"padding:8px 8px 8px 0;border-bottom:1px solid {$c['line']};color:{$c['ink']}\">🏆 {$e($r[0])}"
+                    . "<div style=\"font-size:11px;color:{$c['muted']};margin-top:2px\">{$e($r[4])}</div></td>"
+                    . "<td style=\"padding:8px 8px 8px 0;border-bottom:1px solid {$c['line']};color:{$c['muted']};white-space:nowrap\">{$e($r[1])}</td>"
+                    . "<td style=\"padding:8px 8px 8px 0;border-bottom:1px solid {$c['line']};font-weight:700;white-space:nowrap\">{$e($r[2])}</td>"
+                    . "<td style=\"padding:8px 0;border-bottom:1px solid {$c['line']};color:{$c['green']};font-weight:600;white-space:nowrap\">" . ($r[3] ? '▲ ' . $e($r[3]) : '') . '</td></tr>', $b[1]))
+                . '</table></td></tr>',
+            'insights' => '<tr><td style="padding:0 28px">' . implode('', array_map(fn($x) => sprintf(
+                    '<div style="border-left:4px solid %s;background:%s;border-radius:0 8px 8px 0;padding:12px 14px;margin:0 0 10px">'
+                    . '<div style="font-size:14px;font-weight:700;color:%s">%s %s</div>'
+                    . '<div style="font-size:14px;line-height:1.55;color:%s;margin-top:4px">%s</div></div>',
+                    $b[1] === 'good' ? $c['green'] : $c['orange'], $b[1] === 'good' ? '#f1f7f1' : '#fbf3ee',
+                    $c['ink'], $b[1] === 'good' ? '✓' : '→', $e($x[0]), $c['ink'], $e($x[1])), $b[2])) . '</td></tr>',
         };
     }
-    return '<!doctype html><html><body style="margin:0;padding:24px;background:#eceff4">'
-        . '<div style="max-width:640px;margin:0 auto;background:#fff;border-radius:8px;padding:24px;font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#2e3440;line-height:1.45">'
-        . $out . '</div></body></html>';
+    return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+        . "<body style=\"margin:0;padding:0;background:{$c['bg']}\">"
+        . "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:{$c['bg']}\"><tr><td align=\"center\" style=\"padding:24px 12px\">"
+        . "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:640px;background:{$c['card']};border-radius:12px;"
+        . "font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:{$c['ink']}\">"
+        . $out . '</table></td></tr></table></body></html>';
 }
 
 $md = to_md($doc);
-echo $md;
+echo in_array('--html', $args, true) ? to_html($doc) : $md;
 
 if ($send) {
     if (!defined('REPORT_EMAIL')) {
