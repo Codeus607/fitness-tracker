@@ -12,7 +12,8 @@ set -euo pipefail
 NOTES="${FITNESS_NOTES_DIR:-$HOME/Documents/Fitness}"
 BACKUP="${FITNESS_BACKUP_DIR:-$HOME/.local/share/fitness-tracker}"
 HOST="${FITNESS_HOST:-simonsmind}"
-SSH=(ssh -o BatchMode=yes -o ConnectTimeout=15)
+# keepalives drop a dead connection after ~1 min instead of hanging for hours
+SSH=(ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
 
 if [ -f "$NOTES/Fitness Exercises.md" ]; then
   rsync -t --checksum -e "${SSH[*]}" "$NOTES/Fitness Exercises.md" "$HOST:fitness-data/exercises.md"

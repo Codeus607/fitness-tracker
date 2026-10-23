@@ -16,6 +16,8 @@ header('X-Content-Type-Options: nosniff');
 const COOKIE = 'fit_token';
 const MAX_WEIGHT = 1000;
 const MAX_REPS = 10000;
+// an open workout with no activity for this long is finished at its last activity
+const IDLE_FINISH = 2 * 3600;
 // body measurements in cm, in display order
 const PARTS = ['shoulders', 'chest', 'biceps', 'waist', 'thighs', 'forearms', 'calves'];
 
@@ -73,12 +75,19 @@ function db(): PDO
             part TEXT PRIMARY KEY,
             target REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS bodyweight (
+            date TEXT PRIMARY KEY,
+            kg REAL NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS tokens (
             hash TEXT PRIMARY KEY,
             created_at INTEGER NOT NULL,
             last_used INTEGER NOT NULL
         );
     SQL);
+    // last time a set or the workout itself changed (added after the first release)
+    $cols = array_column($pdo->query('PRAGMA table_info(workouts)')->fetchAll(), 'name');
+    if (!in_array('active_at', $cols)) $pdo->exec('ALTER TABLE workouts ADD COLUMN active_at INTEGER');
     return $pdo;
 }
 
@@ -204,6 +213,28 @@ function measurements(): array
     return db()->query('SELECT date, part, value FROM measurements ORDER BY date, part')->fetchAll();
 }
 
+function bodyweight(): array
+{
+    return db()->query('SELECT date, kg FROM bodyweight ORDER BY date')->fetchAll();
+}
+
+function mark_active(int $id): void
+{
+    db()->prepare('UPDATE workouts SET active_at = ? WHERE id = ?')->execute([time(), $id]);
+}
+
+// finish forgotten workouts at their last activity, so they don't stay open for days
+function finish_idle(): bool
+{
+    $st = db()->prepare('UPDATE workouts SET finished_at = MAX(started_at, COALESCE(active_at, 0),
+            COALESCE((SELECT MAX(created_at) FROM sets WHERE workout_id = workouts.id), 0))
+        WHERE finished_at IS NULL AND EXISTS (SELECT 1 FROM sets WHERE workout_id = workouts.id)
+          AND MAX(started_at, COALESCE(active_at, 0),
+            COALESCE((SELECT MAX(created_at) FROM sets WHERE workout_id = workouts.id), 0)) < ?');
+    $st->execute([time() - IDLE_FINISH]);
+    return $st->rowCount() > 0;
+}
+
 function size_targets(): array
 {
     return array_column(db()->query('SELECT part, target FROM size_targets')->fetchAll(), 'target', 'part');
@@ -318,6 +349,12 @@ function write_md(): void
         foreach (array_reverse($byDate, true) as $d => $vals) $md .= $row($d, $vals);
     }
 
+    $bw = bodyweight();
+    if ($bw) {
+        $md .= "\n## Body weight (kg)\n\n| Date | Weight |\n|---|---|\n";
+        foreach (array_reverse($bw) as $b) $md .= "| {$b['date']} | " . fmt_num((float)$b['kg']) . " |\n";
+    }
+
     $tmp = DATA_DIR . '/Fitness.md.tmp';
     file_put_contents($tmp, $md);
     rename($tmp, DATA_DIR . '/Fitness.md');
@@ -341,7 +378,7 @@ if ($action === 'login' && $method === 'POST') {
 }
 if (!authed()) fail('Not logged in', 401);
 
-$changed = false;
+$changed = $method === 'GET' && $action === 'data' && finish_idle();
 $result = match ("$method $action") {
     'GET data' => [
         'exercises' => exercises(),
@@ -350,6 +387,7 @@ $result = match ("$method $action") {
         'parts' => PARTS,
         'measurements' => measurements(),
         'size_targets' => (object)size_targets(),
+        'bodyweight' => bodyweight(),
     ],
 
     'POST logout' => (function () {
@@ -359,6 +397,7 @@ $result = match ("$method $action") {
     })(),
 
     'POST workout_start' => (function () use ($in, &$changed) {
+        finish_idle();
         $open = db()->query('SELECT id FROM workouts WHERE finished_at IS NULL')->fetchColumn();
         if ($open) fail('A workout is already in progress');
         db()->prepare('INSERT INTO workouts (date, started_at) VALUES (?, ?)')
@@ -378,8 +417,8 @@ $result = match ("$method $action") {
             }
             $finished = $in['finished'] ? ($w['finished_at'] ?: time()) : null;
         }
-        db()->prepare('UPDATE workouts SET date = ?, note = ?, finished_at = ? WHERE id = ?')
-            ->execute([$date, $note, $finished, $w['id']]);
+        db()->prepare('UPDATE workouts SET date = ?, note = ?, finished_at = ?, active_at = ? WHERE id = ?')
+            ->execute([$date, $note, $finished, time(), $w['id']]);
         $changed = true;
         return ['workout' => workout($w['id'])];
     })(),
@@ -413,6 +452,7 @@ $result = match ("$method $action") {
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)')->execute([...$vals, $w['id'], time()]);
             $id = (int)db()->lastInsertId();
         }
+        mark_active($w['id']);
         $changed = true;
         return ['id' => $id, 'workout' => workout($w['id'])];
     })(),
@@ -424,6 +464,7 @@ $result = match ("$method $action") {
             $marks = implode(',', array_fill(0, count($ids), '?'));
             db()->prepare("DELETE FROM sets WHERE workout_id = ? AND id IN ($marks)")->execute([$w['id'], ...$ids]);
         }
+        mark_active($w['id']);
         $changed = true;
         return ['workout' => workout($w['id'])];
     })(),
@@ -469,6 +510,20 @@ $result = match ("$method $action") {
         db()->commit();
         $changed = true;
         return ['size_targets' => (object)size_targets()];
+    })(),
+
+    // one weight per date, saving a date again replaces it
+    'POST weight_save' => (function () use ($in, &$changed) {
+        db()->prepare('INSERT INTO bodyweight (date, kg) VALUES (?, ?) ON CONFLICT(date) DO UPDATE SET kg = excluded.kg')
+            ->execute([valid_date($in['date'] ?? ''), num($in['kg'] ?? null, 20, 400, 'weight')]);
+        $changed = true;
+        return ['bodyweight' => bodyweight()];
+    })(),
+
+    'POST weight_delete' => (function () use ($in, &$changed) {
+        db()->prepare('DELETE FROM bodyweight WHERE date = ?')->execute([valid_date($in['date'] ?? '')]);
+        $changed = true;
+        return ['bodyweight' => bodyweight()];
     })(),
 
     default => fail('Unknown action', 404),

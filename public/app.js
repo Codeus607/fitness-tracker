@@ -66,7 +66,7 @@ const metricUnit = key => ({ e1rm: 'kg', weight: 'kg', volume: 'kg', reps: 'reps
 
 // ---------- state ----------
 const S = {
-  groups: [], info: {}, workouts: [], goals: {}, hist: {}, parts: [], meas: [], sizeTargets: {},
+  groups: [], info: {}, workouts: [], goals: {}, hist: {}, parts: [], meas: [], sizeTargets: {}, bw: [],
   tab: 'log', view: null, month: today().slice(0, 7), showAll: false, metric: null,
   cards: null, cardsFor: null, restAt: null, busy: false,
 };
@@ -83,8 +83,14 @@ function ingest(d) {
   S.sizeTargets = Object.fromEntries(Object.entries(d.size_targets || {}).map(([k, v]) => [k, +v]));
   S.info = {};
   for (const g of S.groups) for (const e of g.exercises) S.info[e.name] = { ...e, group: g.name };
+  S.bw = (d.bodyweight || []).map(b => ({ date: b.date, kg: +b.kg }));
   S.workouts = d.workouts;
   reindex();
+  // the server finishes forgotten workouts, so drop their leftover unticked rows
+  const open = active();
+  try {
+    for (const k of Object.keys(localStorage)) if (k.startsWith('fit-draft-') && (!open || k !== draftKey(open.id))) localStorage.removeItem(k);
+  } catch { }
 }
 
 function reindex() {
@@ -211,6 +217,7 @@ function render() {
   $('#app').innerHTML = v?.type === 'workout' ? viewWorkout(v.id)
     : v?.type === 'exercise' ? viewExercise(v.name)
     : v?.type === 'measure' ? viewMeasure()
+    : v?.type === 'weight' ? viewWeight()
     : S.tab === 'log' ? viewLog()
     : S.tab === 'history' ? viewHistory()
     : viewStats();
@@ -776,6 +783,71 @@ const readParts = pre => {
   return out;
 };
 
+// ----- body weight -----
+const weightPoints = () => S.bw.map(b => ({
+  x: dayMs(b.date), y: b.kg,
+  tip: `<b>${esc(prettyDate(b.date, { day: 'numeric', month: 'short', year: 'numeric' }))}</b><br>${fmt(b.kg)} kg`,
+}));
+
+// latest weight compared to ~30 days earlier, or to the first entry if there's no older one
+function weightChange() {
+  if (S.bw.length < 2) return '';
+  const last = S.bw[S.bw.length - 1];
+  const ref = [...S.bw].reverse().find(b => daysBetween(b.date, last.date) >= 30) || S.bw[0];
+  const d = last.kg - ref.kg, days = daysBetween(ref.date, last.date);
+  return `${d > 0 ? '+' : d < 0 ? '−' : '±'}${fmt(Math.abs(d).toFixed(1))} kg in ${days} day${days === 1 ? '' : 's'}`;
+}
+
+function weightCard() {
+  const last = S.bw[S.bw.length - 1];
+  return `<div class="row between" style="margin-top:26px"><h2 style="margin:0">body weight</h2><button class="btn small" data-act="openWeight">all entries</button></div>
+  <div class="card" style="margin-top:10px">
+    ${last ? `<div class="row between mono" style="font-size:.85rem;margin-bottom:8px">
+      <span><b>${fmt(last.kg)} kg</b> <span class="muted">· ${esc(prettyDate(last.date, { day: 'numeric', month: 'short' }))}</span></span>
+      <span class="muted">${weightChange()}</span></div>
+      ${S.bw.length > 1 ? lineChart(weightPoints(), null, 'kg') : ''}` : '<p class="meta" style="margin:0 0 10px">no weight logged yet</p>'}
+    <div class="row" style="margin-top:10px">
+      <input type="text" inputmode="decimal" id="wQuick" placeholder="${last ? fmt(last.kg) : 'kg'}" aria-label="today's weight in kg">
+      <button class="btn" data-act="saveWeight" data-in="wQuick">add today</button>
+    </div>
+  </div>`;
+}
+
+function viewWeight() {
+  const rows = [...S.bw].reverse();
+  const last = S.bw[S.bw.length - 1];
+  return `
+    <button class="btn ghost small" data-act="back">← back</button>
+    <h1>body weight</h1>
+    <div class="card">
+      <label class="field" for="wDate">date</label>
+      <input type="date" id="wDate" value="${today()}" max="${today()}" style="width:auto;margin-bottom:12px">
+      <label class="field" for="wKg">weight (kg)</label>
+      <div class="row">
+        <input type="text" inputmode="decimal" id="wKg" placeholder="${last ? fmt(last.kg) : 'kg'}">
+        <button class="btn primary" data-act="saveWeight" data-in="wKg" data-date="wDate">save</button>
+      </div>
+      <p class="meta" style="margin:8px 0 0">saving a date again replaces it</p>
+    </div>
+    <h2>evolution</h2>
+    <div class="card">
+      ${S.bw.length > 1 ? `<p class="meta" style="margin:0 0 6px">${weightChange()}</p>${lineChart(weightPoints(), null, 'kg')}` : '<p class="meta">log at least two weights to see the graph</p>'}
+    </div>
+    <h2>history</h2>
+    <div class="card">
+      ${rows.length ? `<div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>date</th><th class="num">kg</th><th class="num">change</th><th></th></tr></thead>
+        <tbody>${rows.map((b, k) => {
+          const prev = rows[k + 1], d = prev ? b.kg - prev.kg : null;
+          return `<tr class="click" data-act="editWeight" data-d="${b.date}">
+            <td>${esc(b.date)}</td><td class="num">${fmt(b.kg)}</td>
+            <td class="num muted">${d == null ? '' : (d > 0 ? '+' : d < 0 ? '−' : '±') + fmt(Math.abs(d).toFixed(1))}</td>
+            <td><button class="btn danger small" data-act="delWeight" data-d="${b.date}" aria-label="delete ${b.date}">✕</button></td></tr>`;
+        }).join('')}</tbody>
+      </table></div><p class="meta" style="margin:10px 0 0">tap a row to edit it</p>` : '<p class="meta">no weight logged yet</p>'}
+    </div>`;
+}
+
 // ----- stats -----
 function monthStats(m) {
   const ws = S.workouts.filter(w => w.date.startsWith(m));
@@ -853,6 +925,7 @@ function viewStats() {
   return `
     <h1>stats</h1>
     ${viewBodyMaps()}
+    ${weightCard()}
     <div class="month-nav">
       <button class="btn ghost" data-act="month" data-n="-1" aria-label="previous month">‹</button>
       <span>${esc(monthName(m).toLowerCase())}</span>
@@ -1186,6 +1259,27 @@ const actions = {
   showAll: el => { S.showAll = el.dataset.v === '1'; render(); },
   metric: el => { S.metric = el.dataset.m; render(); },
   openMeas: () => go({ type: 'measure' }),
+  openWeight: () => go({ type: 'weight' }),
+  saveWeight: el => run(async () => {
+    const kg = parseNum($('#' + el.dataset.in).value);
+    if (!(kg > 0)) throw new Error('Enter your weight in kg');
+    const date = (el.dataset.date && $('#' + el.dataset.date).value) || today();
+    const res = await api('weight_save', { date, kg });
+    S.bw = res.bodyweight.map(b => ({ date: b.date, kg: +b.kg }));
+    toast('weight saved');
+    render();
+  }),
+  editWeight: el => {
+    $('#wDate').value = el.dataset.d;
+    $('#wKg').value = fmt(S.bw.find(b => b.date === el.dataset.d).kg);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  },
+  delWeight: el => run(async () => {
+    if (!confirm(`Delete the weight of ${el.dataset.d}?`)) return;
+    const res = await api('weight_delete', { date: el.dataset.d });
+    S.bw = res.bodyweight.map(b => ({ date: b.date, kg: +b.kg }));
+    render();
+  }),
   saveMeas: () => run(async () => {
     const values = readParts('m');
     const res = await api('measure_save', { date: $('#mDate').value || today(), values });
@@ -1266,6 +1360,11 @@ document.addEventListener('change', e => {
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet();
+  // Enter in a weight field saves it
+  if (e.key === 'Enter' && (e.target.id === 'wQuick' || e.target.id === 'wKg')) {
+    e.preventDefault();
+    return $(`[data-in="${e.target.id}"]`).click();
+  }
   // Enter in a set field ticks the set
   const m = e.key === 'Enter' && (e.target.dataset?.k || '').match(/^(\d+)-(\d+)-(w|r)$/);
   if (m) { e.preventDefault(); e.target.blur(); const row = S.cards[+m[1]].rows[+m[2]]; if (!row.done) run(() => saveRow(+m[1], +m[2])); }

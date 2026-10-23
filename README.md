@@ -13,6 +13,7 @@ Live instance: https://fitness.simonsmind.com (private, password protected).
   - one row per set (kg × reps), with a "previous" column showing last session's numbers
   - tick ✓ to save a set; empty fields reuse last time's numbers
   - warm-up sets, rest timer, notes, and backdating workouts
+  - a workout you forget to finish closes itself 2 hours after its last set, so its duration stays right
 - **PR detection** 🏆 the moment a set beats your history.
 - **Stats per month:**
   - workouts, active days, total load, working sets, exercises per day
@@ -22,6 +23,7 @@ Live instance: https://fitness.simonsmind.com (private, password protected).
   - *size vs goals*: muscles turn darker green the closer your latest tape measurement is to its target (≤75% = palest; waist is inverted: at or under target = darkest, 10 cm over = palest)
 - **Body measurements:** log shoulders, chest, biceps, waist, thighs, forearms and calves (cm) with targets, shown on a spiderweb chart of latest vs target and included in the `Fitness.md` backup
   - exercise → muscle mapping lives in `EX_MUSCLES` in `app.js`; exercises not listed there are guessed from their name or body part
+- **Body weight:** log your weight (kg, one per day) from the stats tab and follow it on a graph, with the change over the last ~30 days; all entries are on their own page and in the `Fitness.md` backup
 - **Best performance summary:**
   - best set, estimated 1RM, last set
   - days since last done, colour-coded (≤3d / ≤7d / older)
@@ -87,7 +89,7 @@ You configure it with environment variables: `FITNESS_NOTES_DIR`, `FITNESS_BACKU
 To run it automatically on Linux with systemd:
 
 ```sh
-cp sync/fitness-sync.{service,timer,path} ~/.config/systemd/user/
+cp sync/fitness-sync.{service,timer,path} sync/fitness-sync-failed.service ~/.config/systemd/user/
 # point it at your notes folder (kept out of the repo, in drop-ins)
 mkdir -p ~/.config/systemd/user/fitness-sync.{service,path}.d
 printf '[Service]\nEnvironment="FITNESS_NOTES_DIR=%%h/Notes/Fitness"\n' > ~/.config/systemd/user/fitness-sync.service.d/local.conf
@@ -99,6 +101,7 @@ systemctl --user enable --now fitness-sync.timer fitness-sync.path
 Once enabled:
 - The timer syncs every 10 minutes.
 - The path unit pushes the exercise list as soon as you save it.
+- A run that fails or hangs (5 minute limit) shows a desktop notification (`notify-send`), and the next tick tries again.
 - To sync right away: `systemctl --user start fitness-sync`
 
 **Restoring from a snapshot:** copy it to the server as `fitness-data/fitness.sqlite`.

@@ -1,7 +1,10 @@
 [Unit]
 Description=Sync fitness tracker files with the Obsidian vault
 After=network-online.target
+OnFailure=fitness-sync-failed.service
 
 [Service]
 Type=oneshot
+# a run never takes this long, so give up and try again on the next tick
+TimeoutStartSec=5min
 ExecStart=%h/Documents/FitnessTracker-Project/sync/fitness-sync.sh

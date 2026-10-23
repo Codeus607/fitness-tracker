@@ -2,8 +2,8 @@
 Description=Pull the fitness backup into the vault every 10 minutes
 
 [Timer]
-OnBootSec=1min
-OnUnitActiveSec=10min
+# wall-clock schedule: keeps firing even after a run fails or hangs
+OnCalendar=*:0/10
 Persistent=true
 
 [Install]
