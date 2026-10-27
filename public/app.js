@@ -272,7 +272,7 @@ function viewLog() {
       <h1>new workout</h1>
       <div class="card">
         <label class="field" for="startDate">date</label>
-        <input type="date" id="startDate" value="${today()}" max="${today()}">
+        <input type="date" id="startDate" value="${today()}" max="${today()}" style="width:auto">
         <div style="height:12px"></div>
         <button class="btn primary block" data-act="start">start empty workout</button>
         ${nextDays().map(({ p, pi, di }) => `<div style="height:8px"></div>
