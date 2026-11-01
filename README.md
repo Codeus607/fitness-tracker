@@ -95,7 +95,7 @@ Live instance: https://fitness.simonsmind.com (private, password protected).
    systemctl --user daemon-reload
    systemctl --user enable --now fitness-report.timer
    ```
-   It runs on the 1st at 09:00, or at the next boot if the laptop was off. Shared hosting with cron access can run `report.php --send` directly instead.
+   It runs on the 1st at 09:00, or at the next boot or resume if the laptop was off. It waits up to 3 minutes for the network, and a failed run is retried every 15 minutes for about 2 hours; the failure popup only shows once all retries have failed. Shared hosting with cron access can run `report.php --send` directly instead.
 
 ## Deploying updates
 

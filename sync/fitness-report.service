@@ -1,9 +1,17 @@
 [Unit]
 Description=Email the monthly fitness report and save it in the vault
-After=network-online.target
+# network-online.target is a system unit, a user manager can't wait for it:
+# the script waits for a route itself, and failed runs are retried below.
+StartLimitIntervalSec=3h
+StartLimitBurst=8
 OnFailure=fitness-failed@%n.service
 
 [Service]
 Type=oneshot
 TimeoutStartSec=5min
 ExecStart=%h/Documents/FitnessTracker-Project/sync/fitness-report.sh
+# Retry every 15 min (about 2 h in all) before giving up and showing the failure popup.
+Restart=on-failure
+# direct: retries do not pass through "failed", so OnFailure only fires once the retries run out
+RestartMode=direct
+RestartSec=15min

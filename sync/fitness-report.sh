@@ -31,6 +31,11 @@ if [ -f "$OUT" ] && [ "$FORCE" = 0 ]; then
   exit 0
 fi
 mkdir -p "$DIR"
+# After a resume the timer fires before Wi-Fi is back: wait up to 3 min for a route.
+for _ in $(seq 36); do
+  ip route get 1.1.1.1 >/dev/null 2>&1 && break
+  sleep 5
+done
 TMP=$(mktemp "$DIR/.report.XXXXXX")
 trap 'rm -f "$TMP"' EXIT
 "${SSH[@]}" "$HOST" "php $WEB/report.php $MONTH --send" > "$TMP"
