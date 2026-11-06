@@ -109,7 +109,7 @@ It uploads `public/` and bumps the service-worker cache so phones pick up the ne
 - pulls `Fitness.md` back into your notes folder
 - saves a consistent snapshot of the database to `~/.local/share/fitness-tracker/`: the latest copy plus one per day, kept for 30 days
 
-You configure it with environment variables: `FITNESS_NOTES_DIR`, `FITNESS_BACKUP_DIR` and `FITNESS_HOST`.
+You configure it with environment variables: `FITNESS_NOTES_DIR`, `FITNESS_OUTPUT_DIR` (where `Fitness.md` and `Fitness Reports/` are written; defaults to the notes folder), `FITNESS_BACKUP_DIR` and `FITNESS_HOST`.
 
 To run it automatically on Linux with systemd:
 
